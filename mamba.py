@@ -5,13 +5,14 @@
 
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
-__copyright__ = "Copyright 2020, muGrid Analytics"
-__version__ = "6.16"
+__copyright__ = "Copyright 2021, muGrid Analytics"
+__version__ = "6.17"
 
 #
 # Versions
 #
 
+#   6.17 - entech hacks: hardcode demand targets, vectors, graphs
 #   6.16 - soc again based on end of period, entech logic for 3 loads/grids
 #   6.15 - merge of 6.14 and 6.13.1, also report gal fuel consumed
 #   6.14 - "pvclass" to allow dispatching of PV power among multiple sites  (parent is 6.13)
@@ -611,9 +612,9 @@ def import_load_data(site, load_stats):
 
 def import_load_data_ue(site, load_stats):
 
-    # 1
+    # 1. elderly center
 
-    filename = './Data/Load/' + site + '1_load.csv'
+    filename = './Data/Load/badriverec_load.csv'
     with open(filename,'r') as f:
         datacsv = list(csv.reader(f, delimiter=","))
         del datacsv[0]
@@ -629,9 +630,9 @@ def import_load_data_ue(site, load_stats):
     md = load_scaling_factor * my_data[1:,1]
     load1_all.P_kw_nf = np.concatenate((md,md),axis=0)
 
-    # 2
+    # 2. head start
 
-    filename = './Data/Load/' + site + '2_load.csv'
+    filename = './Data/Load/badriverhs_load.csv'
     with open(filename,'r') as f:
         datacsv = list(csv.reader(f, delimiter=","))
         del datacsv[0]
@@ -647,9 +648,9 @@ def import_load_data_ue(site, load_stats):
     md = load_scaling_factor * my_data[1:,1]
     load2_all.P_kw_nf = np.concatenate((md,md),axis=0)
 
-    # 3
+    # 3. health clinic
 
-    filename = './Data/Load/' + site + '3_load.csv'
+    filename = './Data/Load/badriverhc_load.csv'
     with open(filename,'r') as f:
         datacsv = list(csv.reader(f, delimiter=","))
         del datacsv[0]
@@ -1188,10 +1189,10 @@ def simulate_entech(m_0,L):
 
     # check indexing
     # (beginning and ending date and hour should match between load and pv)
-    if (load.datetime[0].day    - pv.datetime[0].day):      err.indexing()
-    if (load.datetime[-1].day   - pv.datetime[-1].day):     err.indexing()
-    if (load.datetime[0].hour   - pv.datetime[0].hour):     err.indexing()
-    if (load.datetime[-1].hour  - pv.datetime[-1].hour):    err.indexing()
+    if (load1.datetime[0].day    - pv.datetime[0].day):      err.indexing()
+    if (load1.datetime[-1].day   - pv.datetime[-1].day):     err.indexing()
+    if (load1.datetime[0].hour   - pv.datetime[0].hour):     err.indexing()
+    if (load1.datetime[-1].hour  - pv.datetime[-1].hour):    err.indexing()
 
     #
     # Algorithm
@@ -1199,8 +1200,13 @@ def simulate_entech(m_0,L):
 
     chg=0
 
+    demand_target_1 = 15.
+    demand_target_2 = 55.
+    demand_target_3 = 70.
+
     for i in range(L):
-        demand_target = demand_targets.get(i)
+
+
 
 
         # arbitrage
@@ -1256,9 +1262,6 @@ def simulate_entech(m_0,L):
                     chg = 0
 
 
-
-
-
         # begin new logic
         inv1 = bat.sum_power_request(i,0) # dumb hack
         inv2 = bat.sum_power_request(i,0) # dumb hack
@@ -1266,15 +1269,15 @@ def simulate_entech(m_0,L):
 
         # turn up "inverter" for demand reduction
         # (request PV then batt power to reduce load to demand target)
-        if load1.P_kw_nf[i] > demand_target:
-            inv1 += pv.sum_power_request(i,load1.P_kw_nf[i] - demand_target)
-            inv1 += bat.sum_power_request(i,load1.P_kw_nf[i] - demand_target - inv1)
-        if load2.P_kw_nf[i] > demand_target:
-            inv2 += pv.sum_power_request(i,load2.P_kw_nf[i] - demand_target)
-            inv2 += bat.sum_power_request(i,load2.P_kw_nf[i] - demand_target - inv2)
-        if load3.P_kw_nf[i] > demand_target:
-            inv3 += pv.sum_power_request(i,load3.P_kw_nf[i] - demand_target)
-            inv3 += bat.sum_power_request(i,load3.P_kw_nf[i] - demand_target - inv3)
+        if load1.P_kw_nf[i] > demand_target_1:
+            inv1 += pv.sum_power_request(i,load1.P_kw_nf[i] - demand_target_1)
+            inv1 += bat.sum_power_request(i,load1.P_kw_nf[i] - demand_target_1 - inv1)
+        if load2.P_kw_nf[i] > demand_target_2:
+            inv2 += pv.sum_power_request(i,load2.P_kw_nf[i] - demand_target_2)
+            inv2 += bat.sum_power_request(i,load2.P_kw_nf[i] - demand_target_2 - inv2)
+        if load3.P_kw_nf[i] > demand_target_3:
+            inv3 += pv.sum_power_request(i,load3.P_kw_nf[i] - demand_target_3)
+            inv3 += bat.sum_power_request(i,load3.P_kw_nf[i] - demand_target_3 - inv3)
 
 
         # turn up "inverter" to meet total load
@@ -1311,7 +1314,7 @@ def simulate_entech(m_0,L):
         filename = output_dir + '/vectors_{}.csv'.format(filename_param)
         with open(filename, 'w') as file:
             output = csv.writer(file)
-            output.writerow(['time','load1','load2','load3','pv','b_kw','b_soc','gen','grid1','grid2','grid3','diff'])
+            output.writerow(['datetime','load ec kw','load hs kw','load hc kw','pv kw','bat kw','bat soc','gen kw','grid ec kw','grid hs kw','grid hc kw'])
             for i in range(L):
                 l1=load1.P_kw_nf.item(i)
                 l2=load2.P_kw_nf.item(i)
@@ -1412,6 +1415,8 @@ def simulate_entech(m_0,L):
     # print checksum
     if debug:
         print('\nchecksum: {:.3f}'.format(np.sum(bat.P_kw_nf)))
+
+    return demand_target_1, demand_target_2, demand_target_3
 
 
 
@@ -1708,12 +1713,14 @@ for load_scaling_factor in load_scale_vector:
                     load_all =  DataClass(15.*60., 2*46333)  # timestep[s]
                     results =   DataClass(3.*60.*60., runs)
                     dispatch_previous =  DataClass(15.*60., 2*46333)  # timestep[s]
+
                     import_load_data(site, load_stats)
                     if sim == 'ue':
                         load1_all = DataClass(15.*60., 2*46333)  # timestep[s]
                         load2_all = DataClass(15.*60., 2*46333)  # timestep[s]
                         load3_all = DataClass(15.*60., 2*46333)  # timestep[s]
                         import_load_data_ue(site,load_stats)
+
                     import_pv_data(site)
 
 
@@ -1742,7 +1749,8 @@ for load_scaling_factor in load_scale_vector:
                         # start with fresh variables
                         # wish we could pre-allocate these, but it was causing a bug
                         #   even after calling .clear() on everything
-                        load =  DataClass(  15.*60.,L)                 # timestep[s]
+
+                        load = DataClass(  15.*60.,L)                 # timestep[s]
                         if sim == 'ue':
                             load1 =  DataClass(  15.*60.,L)                 # timestep[s]
                             load2 =  DataClass(  15.*60.,L)                 # timestep[s]
@@ -1769,7 +1777,7 @@ for load_scaling_factor in load_scale_vector:
                             # calculate one last result
                             results.onlineTime_h_ni[i] = grid.offlineCounter/4.
                         elif grid_online and entech:
-                            simulate_entech(t0,L)
+                            (demand_target_1, demand_target_2, demand_target_3) = simulate_entech(t0,L)
                         elif grid_online:
                             simulate_utility_on(t0,L)
                         else:
@@ -1897,7 +1905,7 @@ if plots_on and (sim == 'ue'):
     # 1
     #
 
-    fig1, ax1 = plt.subplots(figsize=(20,8.5))
+    fig1, ax1 = plt.subplots(figsize=(20,8))
     ax2 = ax1.twinx()
 
     # main vectors
@@ -1914,7 +1922,7 @@ if plots_on and (sim == 'ue'):
     # consider putting in a horizontal demand target line
     if peak_shaving:# and debug_demand:
         m1 = load1.datetime[i].month
-        ax1.plot([1, L], [demand_targets.monthly[m1-1], demand_targets.monthly[m1-1]], 'r', label='demand target', linewidth=.5)
+        ax1.plot([1, L], [demand_target_1, demand_target_1], 'r', label='demand target', linewidth=.5)
 
     # plot load and soc
     ax1.plot(t, l1,           'k',    label='load1', linewidth=0.5)
@@ -1944,6 +1952,7 @@ if plots_on and (sim == 'ue'):
     ax1.set_ylabel('power [kW]')
     ax2.set_ylabel('SOC')
 
+    ax1.set_title('elderly center')
     ax1.legend(loc='upper left')
     ax2.legend(loc='upper right')
     ax1.set_xlim(1,L)
@@ -1954,7 +1963,7 @@ if plots_on and (sim == 'ue'):
     # 2
     #
 
-    fig2, ax1 = plt.subplots(figsize=(20,8.5))
+    fig2, ax1 = plt.subplots(figsize=(20,8))
     ax2 = ax1.twinx()
 
     # main vectors
@@ -1969,7 +1978,7 @@ if plots_on and (sim == 'ue'):
     # consider putting in a horizontal demand target line
     if peak_shaving:# and debug_demand:
         m2 = load2.datetime[i].month
-        ax1.plot([1, L], [demand_targets.monthly[m2-1], demand_targets.monthly[m2-1]], 'r', label='demand target', linewidth=.5)
+        ax1.plot([1, L], [demand_target_2, demand_target_2], 'r', label='demand target', linewidth=.5)
 
     # plot load and soc
     ax1.plot(t, l2,           'k',    label='load2', linewidth=0.5)
@@ -1999,6 +2008,7 @@ if plots_on and (sim == 'ue'):
     ax1.set_ylabel('power [kW]')
     ax2.set_ylabel('SOC')
 
+    ax1.set_title('head start')
     ax1.legend(loc='upper left')
     ax2.legend(loc='upper right')
     ax1.set_xlim(1,L)
@@ -2010,7 +2020,7 @@ if plots_on and (sim == 'ue'):
     # 3
     #
 
-    fig2, ax1 = plt.subplots(figsize=(20,8.5))
+    fig2, ax1 = plt.subplots(figsize=(20,8))
     ax2 = ax1.twinx()
 
     # main vectors
@@ -2025,7 +2035,7 @@ if plots_on and (sim == 'ue'):
     # consider putting in a horizontal demand target line
     if peak_shaving:# and debug_demand:
         m3 = load3.datetime[i].month
-        ax1.plot([1, L], [demand_targets.monthly[m3-1], demand_targets.monthly[m3-1]], 'r', label='demand target', linewidth=.5)
+        ax1.plot([1, L], [demand_target_3, demand_target_3], 'r', label='demand target', linewidth=.5)
 
     # plot load and soc
     ax1.plot(t, l3,           'k',    label='load3', linewidth=0.5)
@@ -2055,13 +2065,12 @@ if plots_on and (sim == 'ue'):
     ax1.set_ylabel('power [kW]')
     ax2.set_ylabel('SOC')
 
+    ax1.set_title('health clinic')
     ax1.legend(loc='upper left')
     ax2.legend(loc='upper right')
     ax1.set_xlim(1,L)
     ax1.set_ylim(0,1.1*np.max([p,l3,g,d,c,G3]))
     ax2.set_ylim(0,1.1)
-
-
 
     plt.show()
 
