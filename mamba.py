@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "6.17"
+__version__ = "6.17.1"
 
 #
 # Versions
 #
 
+#   6.17.1 - quick branch: report 144h confidence (overall and just apr-nov), change some file outputs
 #   6.17 - entech hacks: hardcode demand targets, vectors, graphs
 #   6.16 - soc again based on end of period, entech logic for 3 loads/grids
 #   6.15 - merge of 6.14 and 6.13.1, also report gal fuel consumed
@@ -1448,6 +1449,7 @@ runs = 365*24//simulation_interval   # number of iterations
 skip_ahead = 0                      # number of hours to skip ahead
 solar_data_inverval_15min = 1
 superloop_enabled = 0               # run matrix of battery energy and PV scale (oversize) factors
+hard_code_superloop = 0
 peak_shaving = 0
 grid_online = 0
 grid_charging = 0
@@ -1468,7 +1470,7 @@ dod = 1.                 # depth of discharge
 gen_power = 0.           # kw
 gen_tank = 100.          # gal
 gen_fuel_propane = 0    # 1 = propane, 0 = diesel
-batt_power_varies = 0  # batt power such that capacity = 1h
+calc_energy_from_hrs = 0  # batt power such that capacity = 1h
 
 # outputs on/off
 output_sim_meta = 1        # only this should be left on normally
@@ -1503,11 +1505,11 @@ if len(sys.argv) > 1:
 
         elif sys.argv[i] == '-bp':
             batt_power = float(sys.argv[i+1])
-            batt_power_varies = 0
+            calc_energy_from_hrs = 0
 
         elif sys.argv[i] == '-bh':
             batt_hrs = float(sys.argv[i+1])
-            batt_power_varies = 1
+            calc_energy_from_hrs = 1
 
         elif sys.argv[i] == '-be':
             batt_energy = float(sys.argv[i+1])
@@ -1622,18 +1624,26 @@ if len(sys.argv) > 1:
 
         elif sys.argv[i] == '-sl':
             superloop_enabled = 1
+            hard_code_superloop = 1
 
         elif sys.argv[i] == '-slp':
-            j = i + 6 + 1                # excpect 6 more args
+            j = i + 5 + 1                # expect 5 more args
             superloop_enabled = 1
             strs = sys.argv[i+1:j]
             pv_scale_vector = [float(i) for i in strs]
 
-        elif sys.argv[i] == '-slb':
-            j = i + 4 + 1               # excpect 4 more args
+        elif sys.argv[i] == '-slbp':
+            j = i + 2 + 1               # expect 2 more args
             superloop_enabled = 1
             strs = sys.argv[i+1:j]
-            batt_energy_vector = [int(i) for i in strs]
+            batt_power_vector = [int(i) for i in strs]
+
+        elif sys.argv[i] == '-slbh':
+            j = i + 6 + 1               # expect 6 more args
+            superloop_enabled = 1
+            calc_energy_from_hrs = 1
+            strs = sys.argv[i+1:j]
+            batt_hrs_vector = [int(i) for i in strs]
 
         elif sys.argv[i] == '-gfp':
             gen_fuel_propane = 1
@@ -1659,12 +1669,19 @@ else:
 # Superloop
 #
 
-if superloop_enabled:
+if superloop_enabled and hard_code_superloop:
     pv_scale_vector = [1, 1.25, 1.5, 1.75, 2.0]
     load_scale_vector = [1]
     batt_power_vector = [30,60,90]
     batt_hrs_vector = [1]
     gen_power_vector = [0]
+elif superloop_enabled:
+    #pv_scale_vector = [pv_scaling_factor]
+    #batt_energy_vector = [batt_energy]
+    load_scale_vector = [load_scaling_factor]
+    #batt_power_vector = [batt_power]
+    #batt_hrs_vector = [batt_hrs]
+    gen_power_vector = [gen_power]
 else:
     pv_scale_vector = [pv_scaling_factor]
     batt_energy_vector = [batt_energy]
@@ -1687,6 +1704,8 @@ min_ttff = []
 
 conf_72h = []
 conf_336h = []
+conf_144h = []
+conf_144h_apr_nov = []
 
 for load_scaling_factor in load_scale_vector:
     for pv_scaling_factor in pv_scale_vector:
@@ -1695,7 +1714,7 @@ for load_scaling_factor in load_scale_vector:
                 for gen_power in gen_power_vector:
                     [gen_fuelA, gen_fuelB] = lookup_fuel_curve_coeffs(gen_power, gen_fuel_propane)
 
-                    if batt_power_varies:
+                    if calc_energy_from_hrs:
                         batt_energy = batt_power * batt_hrs
 
                     #
@@ -1798,6 +1817,13 @@ for load_scaling_factor in load_scale_vector:
 
                     conf_72h.append(len(ttff[ttff >= 72])/runs)
                     conf_336h.append(len(ttff[ttff >= 336])/runs)
+                    conf_144h.append(len(ttff[ttff >= 144])/runs)
+
+                    i_apr1 = 720    # assume each i-step is 3 h
+                    i_nov1 = 2432   # assume each i-step is 3 h
+                    runs_apr_nov = i_nov1 - i_apr1
+                    ttff_apr_nov = ttff[i_apr1:i_nov1]
+                    conf_144h_apr_nov.append(len(ttff_apr_nov[ttff_apr_nov >= 144])/runs_apr_nov)
 
                     max_ttff.append(np.max(ttff))
                     min_ttff.append(np.min(ttff))
@@ -1805,7 +1831,7 @@ for load_scaling_factor in load_scale_vector:
 
                     if debug_res:
                         print('TTFF [h]: max={} avg={} min={}'.format(max_ttff,avg_ttff,min_ttff))
-                        print('Confidence: 72h={} 336h={}'.format(conf_72h,conf_336h))
+                        print('Confidence: 72h={} 336h={} 144h={} 144h_apr_nov'.format(conf_72h,conf_336h,conf_144h,conf_144h_apr_nov))
 
                     if output_sim_meta:
                         if superloop_enabled:
@@ -1856,6 +1882,8 @@ for load_scaling_factor in load_scale_vector:
                             output.writerow([])
                             output.writerow(['Confidence 72 h',conf_72h])
                             output.writerow(['Confidence 336 h',conf_336h])
+                            output.writerow(['Confidence 144 h',conf_144h])
+                            output.writerow(['Confidence 144 h (apr-nov)',conf_144h_apr_nov])
                             output.writerow(['Max TTFF [h]', max_ttff])
                             output.writerow(['Avg TTFF [h]', avg_ttff])
                             output.writerow(['Min TTFF [h]', min_ttff])
@@ -1887,16 +1915,11 @@ if superloop_enabled:
         output.writerow(['Mamba.py v',__version__])
         output.writerow(['Datetime',dt.datetime.now()])
         output.writerow(['Runtime [s]',results.code_runtime_s])
-        if batt_power_varies:
-            output.writerow(['Battery power varies such that capacity is ', batt_hrs, 'h'])
-        else:
-            output.writerow(['Battery power [kW]',batt_power])
-        output.writerow(['Gen power [kW]', gen_power])
         output.writerow(['Gen tank size [gal]', gen_tank])
         output.writerow([])
-        output.writerow(['Load Scaling factor', 'PV scaling factor','Batt energy [kWh]', 'Batt Power [kW]', 'Batt hrs [h]', 'Generator power [kVA]','Confidence 168h','Confidence 336h','Min TTFF [h]','Avg TTFF [h]', 'Max TTFF [h]'])
+        output.writerow(['Load Scaling factor', 'PV scaling factor','Batt energy [kWh]', 'Batt Power [kW]', 'Batt hrs [h]', 'Generator power [kVA]','Confidence 168h','Confidence 336h','Min TTFF [h]','Avg TTFF [h]', 'Max TTFF [h]','Confidence 144h','Confidence 144h (apr-nov)'])
         for i in range(len(max_ttff)):
-            output.writerow([load_scale_vals[i],pv_scale_vals[i],batt_energy_vals[i], batt_power_vals[i], batt_hrs_vals[i], gen_power_vals[i], conf_72h[i],conf_336h[i],min_ttff[i],avg_ttff[i],max_ttff[i]])
+            output.writerow([load_scale_vals[i],pv_scale_vals[i],batt_energy_vals[i], batt_power_vals[i], batt_hrs_vals[i], gen_power_vals[i], conf_72h[i],conf_336h[i],min_ttff[i],avg_ttff[i],max_ttff[i],conf_144h[i],conf_144h_apr_nov[i]])
 
 # plots
 if plots_on and (sim == 'ue'):
