@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "6.17.1"
+__version__ = "6.18"
 
 #
 # Versions
 #
 
+#   6.18 - pv, load, and soc profiles from a new file format and location, user-defined confidence duration and "vary soc0" flag, meta in resilience/vector csv's
 #   6.17.1 - quick branch: report 144h confidence (overall and just apr-nov), change some file outputs
 #   6.17 - entech hacks: hardcode demand targets, vectors, graphs
 #   6.16 - soc again based on end of period, entech logic for 3 loads/grids
@@ -111,10 +112,11 @@ class DataClass:
         me.offset = 0                    # in case load and pv data don't begin at same time
         me.datetime = []
         me.P_kw_nf = np.zeros((length,), dtype=float)
-        me.onlineTime_h_ni = np.zeros((length,),dtype=int)
+        me.onlineTime_h_ni = np.zeros((length,),dtype=float)
         me.time_to_grid_import_h_nf = np.zeros((length,), dtype=float) # [h]
         me.soc_nf = np.zeros((length,), dtype=float) # [h]
         me.code_runtime_s = 0
+        me.version = 0
 
     def clear(me):
         me.datetime = []
@@ -346,6 +348,8 @@ class PVClass:
         me.datetime = []
         me.P_kw_nf = np.zeros((length,), dtype=float)       # power available
         me.Pdisp = np.zeros((length,), dtype=float)         # power NOT dispatched
+        me.version = 0
+
 
     def clear(me):
         me.datetime = []
@@ -369,6 +373,34 @@ class DemandTargetsClass:
         me.import_demand_targets(site)  # mandatory
         me.import_tou_schedule(site)    # optional
 
+    def import_demand_targets(me,site):
+        print ('broken!')
+        quit()
+
+        filename = './Data/Demand targets/' + site + '_demand_targets.csv'
+        try:
+            me.monthly = np.genfromtxt(filename, delimiter=',')[1:]
+            if me.monthly.ndim == 1:
+                me.monthly = np.expand_dims(me.monthly, axis=1)   # make sure targets array is 2D
+
+        except OSError:
+            print('FATALITY: Could not open demand targets at: \n', filename)
+            quit()
+
+    def import_tou_schedule(me,site):
+        print ('broken!')
+        quit()
+
+        filename = './Data/Demand targets/' + site + '_tou_schedule.csv'
+        try:
+            me.tou_sched = np.genfromtxt(filename, dtype=int, delimiter=',')[1:]
+            me.calc_tou_levels()
+            me.calc_tou_res()
+
+        except OSError:
+            print('FATALITY: Could not open TOU schedule at: \n', filename)
+            quit()
+
     # low/med/hi = 3, etc
     def calc_tou_levels(me):
         me.tou_levels = int(np.max(me.tou_sched) + 1)
@@ -386,29 +418,6 @@ class DemandTargetsClass:
         if (me.monthly.shape[1] > 1) or (me.tou_levels > 1):
             if me.tou_levels != me.monthly.shape[1]:
                 print('WARNING: demand target shape should reflect the number of TOU levels')
-
-    def import_demand_targets(me,site):
-        filename = './Data/Demand targets/' + site + '_demand_targets.csv'
-        try:
-            me.monthly = np.genfromtxt(filename, delimiter=',')[1:]
-            if me.monthly.ndim == 1:
-                me.monthly = np.expand_dims(me.monthly, axis=1)   # make sure targets array is 2D
-
-        except OSError:
-            print('FATALITY: Could not open demand targets at: \n', filename)
-            quit()
-
-    def import_tou_schedule(me,site):
-        filename = './Data/Demand targets/' + site + '_tou_schedule.csv'
-
-        try:
-            me.tou_sched = np.genfromtxt(filename, dtype=int, delimiter=',')[1:]
-            me.calc_tou_levels()
-            me.calc_tou_res()
-
-        except OSError:
-            print('FATALITY: Could not open TOU schedule at: \n', filename)
-            quit()
 
     def get_tou_level(me,i):
         hour = load.datetime[i].hour
@@ -438,8 +447,6 @@ class DemandTargetsClass:
                 print('{} {} tou_res {} tou_level_now {} demand_target {}'.format(i,load.datetime[i],me.tou_res_minutes,tou_level_now,me.monthly[month-1,tou_level_now]))
 
         return me.monthly[month-1,tou_level_now]
-
-
 
 
 #
@@ -528,6 +535,7 @@ def help_printout():
     print('     careful: -bd just changes the battery energy, so soc will still be 0-100%')
     print(' Plots ON (option to plot normal or utility first):    --plots [ | u]                     e.g. --plots     default=OFF')
     print('Debug (see code):        --debug [arg]               e.g. --debug demand')
+    print('Dev (see code):          -d                          e.g. -d')
     print('')
 
 #
@@ -610,6 +618,7 @@ def import_load_data(site, load_stats):
         print('max load [kw] = {:.1f}'.format(np.amax(load_all.P_kw_nf)))
         print('avg load [kw] = {:.1f}'.format(np.average(load_all.P_kw_nf)))
         print('min load [kw] = {:.1f}'.format(np.amin(load_all.P_kw_nf)))
+        print('stdev load [kw] = {:.1f}'.format(np.std(load_all.P_kw_nf)))
 
 def import_load_data_ue(site, load_stats):
 
@@ -667,9 +676,47 @@ def import_load_data_ue(site, load_stats):
     md = load_scaling_factor * my_data[1:,1]
     load3_all.P_kw_nf = np.concatenate((md,md),axis=0)
 
+#
+# Import load vector from version control directory
+#
+
+def import_load_data_vc(site, load_stats=False):
+
+    filename = '../Profiles VC/Load/profile_load_' + site + '.csv'
+    if dev: filename = '../../../muGrid Analytics Dropbox/Profiles VC/Load/profile_load_' + site + '.csv'
+
+    with open(filename,'r') as f:
+        datacsv = list(csv.reader(f, delimiter=","))
+        d = np.genfromtxt(filename, delimiter=',')
+        t = [dt.datetime(2019,1,1)]
+
+        i=0
+        for line in datacsv:
+            if i==0: load_all.version = int(line[-1])
+            if (line[0] == '1') or (i>15): break
+            i += 1
+
+    #load_scaling_factor = 1
+    #load_all =  DataClass(15.*60., 2*46333)  # timestep[s]
+    load_all.P_kw_nf = np.zeros((35040,), dtype=float)
+
+    # clip header, select only right-most column
+    md = load_scaling_factor * d[i:,load_all.version]
+
+    load_all.P_kw_nf = np.concatenate((md,md),axis=0)
+
+    for n in range (1, 35040): t.append(t[n-1] + dt.timedelta(minutes = 15))
+    load_all.datetime = t+t
+
+    if load_stats:
+        print('max load [kw] = {:.1f}'.format(np.amax(load_all.P_kw_nf)))
+        print('avg load [kw] = {:.1f}'.format(np.average(load_all.P_kw_nf)))
+        print('min load [kw] = {:.1f}'.format(np.amin(load_all.P_kw_nf)))
+        print('stdev load [kw] = {:.1f}'.format(np.std(load_all.P_kw_nf)))
+
 
 #
-# Import solar vector
+# Import solar data
 #
 
 def import_pv_data(site):
@@ -712,12 +759,70 @@ def import_pv_data(site):
     pv_all.Pdisp = np.copy(pv_all.P_kw_nf)              # copy over for dispatching solar
 
 #
-# Import 35040 of soc from annual simulation
+# Import solar vector from version control directory
 #
 
-def import_soc_35040(site):
-    vals = np.genfromtxt(soc_filename, delimiter=',')
-    dispatch_previous.soc_nf = np.concatenate((vals[1:],vals[1:]),axis=0)
+def import_pv_data_vc(site):
+
+    filename = '../Profiles VC/Solar/profile_solar_' + site + '.csv'
+    if dev: filename = '../../../muGrid Analytics Dropbox/Profiles VC/Solar/profile_solar_' + site + '.csv'
+
+    with open(filename,'r') as f:
+        datacsv = list(csv.reader(f, delimiter=","))
+        d = np.genfromtxt(filename, delimiter=',')
+        t = [dt.datetime(2019,1,1)]
+
+        i=0
+        for line in datacsv:
+            if i==0: pv_all.version = int(line[-1])
+            if (line[0] == '1') or (i>15): break
+            i += 1
+
+    pv_all.P_kw_nf = np.zeros((35040,), dtype=float)
+
+    # clip header, select only right-most column
+    md = pv_scaling_factor * d[i:,pv_all.version]    # clip header, scale accordingly
+
+    pv_all.P_kw_nf = np.concatenate((md,md),axis=0) # wrap around new years
+
+    for n in range (1, 35040): t.append(t[n-1] + dt.timedelta(minutes = 15))
+    pv_all.datetime = t+t
+
+
+
+#
+# Import soc from previous utility connected simulation
+#
+
+def import_soc_vc(site):
+
+    ##filename = './Data/Dispatch/soc_' + site + '_35040.csv'
+    #filename = '../Profiles VC/SOC/profile_soc_' + site + '.csv'
+    #if dev: filename = '../../../muGrid Analytics Dropbox/Profiles VC/SOC/profile_soc_' + site + '.csv'
+    #vals = np.genfromtxt(filename, delimiter=',')
+    #dispatch_previous.soc_nf = np.concatenate((vals[1:],vals[1:]),axis=0)
+
+    filename = '../Profiles VC/SOC/profile_soc_' + site + '.csv'
+    if dev: filename = '../../../muGrid Analytics Dropbox/Profiles VC/SOC/profile_soc_' + site + '.csv'
+
+    with open(filename,'r') as f:
+        datacsv = list(csv.reader(f, delimiter=","))
+        d = np.genfromtxt(filename, delimiter=',')
+        t = [dt.datetime(2019,1,1)]
+
+        i=0
+        for line in datacsv:
+            if i==0: dispatch_previous.version = int(line[-1])
+            if (line[0] == '1') or (i>15): break
+            i += 1
+
+    dispatch_previous.soc_nf = np.zeros((35040,), dtype=float)
+
+    # clip header, select only right-most column
+    md = d[i:,dispatch_previous.version]
+
+    dispatch_previous.soc_nf = np.concatenate((md,md),axis=0) # wrap around new years
+
 
 
 #
@@ -725,6 +830,9 @@ def import_soc_35040(site):
 #
 
 def import_demand_targets(site):
+    print ('broken!')
+    quit()
+
     filename = './Data/Demand targets/' + site + '_demand_targets_3.csv'
     vals = np.genfromtxt(filename, delimiter=',')
     if vals.ndim == 1:
@@ -769,6 +877,7 @@ def get_demand_target(i):
         demand_target = demand_targets.monthly[month-1,tou_level]
 
     return demand_target
+
 
 
 
@@ -849,9 +958,7 @@ def simulate_resilience(t_0,L):
 
 
     # begin battery with the soc from a previous year-long utility-on simulation
-    if vary_soc: bat.set_soc0(dispatch_previous.soc_nf[t_0])
-
-    if debug_res: print('soc0={:.2f}'.format(bat.soc0))
+    if vary_soc0: bat.set_soc0(dispatch_previous.soc_nf[t_0])
 
     chg = 0
 
@@ -914,7 +1021,26 @@ def simulate_resilience(t_0,L):
         filename = output_dir + '/vectors_{}.csv'.format(filename_param)
         with open(filename, 'w') as file:
             output = csv.writer(file)
-            output.writerow(['datetime','load kW','pv kW','batt kw','batt soc','gen kW','gen gal','grid kW'])
+            output.writerow(['Site',site])
+            output.writerow(['mamba.py ver',__version__])
+            output.writerow(['Load profile ver',load_all.version])
+            output.writerow(['Solar profile ver',pv_all.version])
+            output.writerow(['Datetime',dt.datetime.now()])
+            output.writerow(['Simulated outage duration [days]',days])
+            output.writerow(['Outages simulated',runs])
+            output.writerow(['Program call and args',' '.join(sys.argv)])
+            output.writerow([])
+            output.writerow(['PV scaling factor', pv_scaling_factor])
+            output.writerow(['Battery power [kW]',batt_power])
+            output.writerow(['Battery energy [kWh]',batt_energy])
+            output.writerow(['Battery hours [kWh]',batt_hrs])
+            output.writerow(['Generator power [kW]',gen_power])
+            output.writerow(['Generator tank [gal]',gen_tank])
+            output.writerow(['Fuel curve A coefficient [gal/h/kW]',gen_fuelA])
+            output.writerow(['Fuel curve B coefficient [gal/h]',gen_fuelB])
+            output.writerow(['Pull soc0 from previous dispatch?',vary_soc0])
+            output.writerow([])
+            output.writerow(['datetime','load kW','pv kW','batt kw','batt soc','gen kW','fuel gal','grid kW'])
             for i in range(L):
                 if solar_data_inverval_15min:
                     i_pv = i
@@ -928,8 +1054,6 @@ def simulate_resilience(t_0,L):
                 f=gen.fuelConsumed_gal_nf.item(i)
                 G=grid.P_kw_nf.item(i)
                 output.writerow([load.datetime[i],l,p,b,s,g,f,G])
-
-    if debug: print('checksum: {:.1f}'.format(np.sum(bat.P_kw_nf)))
 
     return time_to_grid_import
 
@@ -1069,7 +1193,26 @@ def simulate_utility_on(t_0,L):
         filename = output_dir + '/vectors_{}.csv'.format(filename_param)
         with open(filename, 'w') as file:
             output = csv.writer(file)
-            output.writerow(['time','load','pv','b_kw','b_soc','gen','grid','diff'])
+            output.writerow(['Site',site])
+            output.writerow(['mamba.py ver',__version__])
+            output.writerow(['Load profile ver',load_all.version])
+            output.writerow(['Solar profile ver',pv_all.version])
+            output.writerow(['Datetime',dt.datetime.now()])
+            output.writerow(['Simulated outage duration [days]',days])
+            output.writerow(['Outages simulated',runs])
+            output.writerow(['Program call and args',' '.join(sys.argv)])
+            output.writerow([])
+            output.writerow(['PV scaling factor', pv_scaling_factor])
+            output.writerow(['Battery power [kW]',batt_power])
+            output.writerow(['Battery energy [kWh]',batt_energy])
+            output.writerow(['Battery hours [kWh]',batt_hrs])
+            output.writerow(['Generator power [kW]',gen_power])
+            output.writerow(['Generator tank [gal]',gen_tank])
+            output.writerow(['Fuel curve A coefficient [gal/h/kW]',gen_fuelA])
+            output.writerow(['Fuel curve B coefficient [gal/h]',gen_fuelB])
+            output.writerow(['Pull soc0 from previous dispatch?',vary_soc0])
+            output.writerow([])
+            output.writerow(['datetime','load kW','pv kW','batt kw','batt soc','gen kW','fuel gal','grid kW'])
             for i in range(L):
                 if solar_data_inverval_15min:
                     i_pv = i
@@ -1080,9 +1223,9 @@ def simulate_utility_on(t_0,L):
                 b=bat.P_kw_nf.item(i)
                 s=bat.soc_nf.item(i)
                 g=gen.P_kw_nf.item(i)
+                f=gen.fuelConsumed_gal_nf.item(i)
                 G=grid.P_kw_nf.item(i)
-                d=l-p-b-g-G
-                output.writerow([load.datetime[i],l,p,b,s,g,G,d])
+                output.writerow([load.datetime[i],l,p,b,s,g,f,G])
 
     # print a single vector
     if batt_vector_print:
@@ -1315,6 +1458,25 @@ def simulate_entech(m_0,L):
         filename = output_dir + '/vectors_{}.csv'.format(filename_param)
         with open(filename, 'w') as file:
             output = csv.writer(file)
+            output.writerow(['Site',site])
+            output.writerow(['mamba.py ver',__version__])
+            output.writerow(['Load profile ver',load_all.version])
+            output.writerow(['Solar profile ver',pv_all.version])
+            output.writerow(['Datetime',dt.datetime.now()])
+            output.writerow(['Simulated outage duration [days]',days])
+            output.writerow(['Outages simulated',runs])
+            output.writerow(['Program call and args',' '.join(sys.argv)])
+            output.writerow([])
+            output.writerow(['PV scaling factor', pv_scaling_factor])
+            output.writerow(['Battery power [kW]',batt_power])
+            output.writerow(['Battery energy [kWh]',batt_energy])
+            output.writerow(['Battery hours [kWh]',batt_hrs])
+            output.writerow(['Generator power [kW]',gen_power])
+            output.writerow(['Generator tank [gal]',gen_tank])
+            output.writerow(['Fuel curve A coefficient [gal/h/kW]',gen_fuelA])
+            output.writerow(['Fuel curve B coefficient [gal/h]',gen_fuelB])
+            output.writerow(['Pull soc0 from previous dispatch?',vary_soc0])
+            output.writerow([])
             output.writerow(['datetime','load ec kw','load hs kw','load hc kw','pv kw','bat kw','bat soc','gen kw','grid ec kw','grid hs kw','grid hc kw'])
             for i in range(L):
                 l1=load1.P_kw_nf.item(i)
@@ -1427,7 +1589,6 @@ def simulate_entech(m_0,L):
 #
 ################################################################################
 
-
 t_script_begin_dt = dt.datetime.now()
 
 err =   FaultClass()
@@ -1438,10 +1599,10 @@ err =   FaultClass()
 #
 
 # data
-site = 'badriverhc'                    # fish, hradult, (hrfire not working)
 pv_scaling_factor = 1
 load_scaling_factor = 1
 filename_param = ''
+old_profile_import = False
 
 # simulation
 simulation_interval = 3            # hours between simulated outages
@@ -1458,26 +1619,25 @@ PS_arb_thresh = 0.4
 demand_target = 0
 days = 14                          # length of grid outage
 L = days*24*4                     # length of simulation in timesteps
-vary_soc = 0
+vary_soc0 = False
 weekend_arb_off = 0
-#tou_levels = 1
+Xh = 168    # option to choose the length of time to calculate confidence interval
 
 # physical capacities
-batt_power = 200.         # kw
+batt_power = 0.         # kw
 batt_hrs = 0.           # kWh/kW
-batt_energy = 580.       # kwh
+batt_energy = 0.       # kwh
 dod = 1.                 # depth of discharge
 gen_power = 0.           # kw
-gen_tank = 100.          # gal
+gen_tank = 0.          # gal
 gen_fuel_propane = 0    # 1 = propane, 0 = diesel
 calc_energy_from_hrs = 0  # batt power such that capacity = 1h
 
 # outputs on/off
-output_sim_meta = 1        # only this should be left on normally
 output_resilience = 0
 output_vectors = 0
 plots_on = 0
-load_stats = 0
+load_stats = False
 debug = 0
 debug_energy = 0
 debug_demand = 0
@@ -1485,6 +1645,8 @@ debug_indexing = 0
 debug_res = 0
 batt_vector_print = 0
 
+# etc
+dev = False
 
 # command line run options override defaults
 if len(sys.argv) > 1:
@@ -1568,6 +1730,12 @@ if len(sys.argv) > 1:
                 print('\033[1;31;1m fatality: no simulation type selected')
                 quit()
 
+        elif sys.argv[i] == '-c': # length of time for confidence interval calc
+            Xh = int(sys.argv[i+1])
+
+        elif sys.argv[i] == '-vs':
+            vary_soc0 = True
+
         elif sys.argv[i] == '-psat':
             PS_arb_thresh = float(sys.argv[i+1])
 
@@ -1593,7 +1761,11 @@ if len(sys.argv) > 1:
                     plot_grid_first = 1
 
         elif sys.argv[i] == '--loadstats':
-            load_stats = 1
+            load_stats = True
+
+        elif sys.argv[i] == '--dev':
+            dev = True
+            __version__ = __version__ + '_dev'
 
         elif sys.argv[i] == '--debug':
 
@@ -1651,6 +1823,22 @@ if len(sys.argv) > 1:
         elif sys.argv[i] == '-sv':
             filename_param = str(sys.argv[i+1])
 
+        elif sys.argv[i] == '-opi':
+            old_profile_import = True
+
+        elif sys.argv[i] == '--test':
+            site = 'mugrid_test'
+            dev = True
+            debug = 1
+            debug_energy = 1
+            batt_power = 2.         # kw
+            batt_energy = 10.       # kwh
+            gen_power = 2.           # kw
+            gen_tank = 10.          # gal
+            runs = 1
+            days = 3
+            L = days*24*4           # length of simulation in timesteps
+
         elif sys.argv[i] == '--help' :
             help_printout()
             quit()
@@ -1659,7 +1847,7 @@ if len(sys.argv) > 1:
 # Create output directory
 #
 now = dt.datetime.now().strftime("%Y_%m_%d__%H_%M_%S")
-output_dir = './Data/Output/' + site + '_' + str(now)
+output_dir = './Data/Output/' + site + '__' + str(now)
 if not os.path.exists(output_dir):
     os.mkdir(output_dir)
 else:
@@ -1703,9 +1891,8 @@ avg_ttff = []
 min_ttff = []
 
 conf_72h = []
+conf_Xh = []
 conf_336h = []
-conf_144h = []
-conf_144h_apr_nov = []
 
 for load_scaling_factor in load_scale_vector:
     for pv_scaling_factor in pv_scale_vector:
@@ -1733,21 +1920,32 @@ for load_scaling_factor in load_scale_vector:
                     results =   DataClass(3.*60.*60., runs)
                     dispatch_previous =  DataClass(15.*60., 2*46333)  # timestep[s]
 
-                    import_load_data(site, load_stats)
-                    if sim == 'ue':
+
+                    if old_profile_import:
+                        import_load_data(site, load_stats)
+                        import_pv_data(site)
+
+                    elif sim == 'ue':
                         load1_all = DataClass(15.*60., 2*46333)  # timestep[s]
                         load2_all = DataClass(15.*60., 2*46333)  # timestep[s]
                         load3_all = DataClass(15.*60., 2*46333)  # timestep[s]
                         import_load_data_ue(site,load_stats)
+                        import_pv_data(site)
 
-                    import_pv_data(site)
+                    else:
+                        import_load_data_vc(site,load_stats)
+                        import_pv_data_vc(site)
+
+
+
 
 
                     # look for dispatch file containing soc 35040 - use if available
-                    soc_filename = './Data/Dispatch/soc_' + site + '_35040.csv'
-                    if not grid_online and os.path.isfile(soc_filename):
-                        vary_soc = 1
-                        import_soc_35040(site)
+                    #soc_filename = './Data/Dispatch/soc_' + site + '_35040.csv'
+                    #if not grid_online and os.path.isfile(soc_filename):
+                    #    vary_soc0 = 1
+                    #    import_soc_35040(site)
+                    if vary_soc0: import_soc_vc(site)
 
                     if peak_shaving:
                         demand_targets =  DemandTargetsClass(site)
@@ -1816,14 +2014,8 @@ for load_scaling_factor in load_scale_vector:
                     ttff  = results.time_to_grid_import_h_nf
 
                     conf_72h.append(len(ttff[ttff >= 72])/runs)
+                    conf_Xh.append(len(ttff[ttff >= Xh])/runs)
                     conf_336h.append(len(ttff[ttff >= 336])/runs)
-                    conf_144h.append(len(ttff[ttff >= 144])/runs)
-
-                    i_apr1 = 720    # assume each i-step is 3 h
-                    i_nov1 = 2432   # assume each i-step is 3 h
-                    runs_apr_nov = i_nov1 - i_apr1
-                    ttff_apr_nov = ttff[i_apr1:i_nov1]
-                    conf_144h_apr_nov.append(len(ttff_apr_nov[ttff_apr_nov >= 144])/runs_apr_nov)
 
                     max_ttff.append(np.max(ttff))
                     min_ttff.append(np.min(ttff))
@@ -1831,44 +2023,23 @@ for load_scaling_factor in load_scale_vector:
 
                     if debug_res:
                         print('TTFF [h]: max={} avg={} min={}'.format(max_ttff,avg_ttff,min_ttff))
-                        print('Confidence: 72h={} 336h={} 144h={} 144h_apr_nov'.format(conf_72h,conf_336h,conf_144h,conf_144h_apr_nov))
-
-                    if output_sim_meta:
-                        if superloop_enabled:
-                              filename = output_dir + '/sim_meta_{:}_{:.1f}_{:.3f}_{:.0f}_{:.1f}_{:.0f}.csv'.format(site, load_scaling_factor, pv_scaling_factor, batt_power, batt_hrs, gen_power)
-                        else:
-                            filename = output_dir + '/sim_meta_{}_{}.csv'.format(site, filename_param)
-                        with open(filename, 'w') as file:
-                            output = csv.writer(file)
-                            output.writerow(['Site',site])
-                            output.writerow(['Mamba.py v',__version__])
-                            output.writerow(['Datetime',dt.datetime.now()])
-                            output.writerow(['Simulated outage duration [days]',days])
-                            output.writerow(['Consecutive simulations',runs])
-                            output.writerow([])
-                            output.writerow(['PV scaling factor', pv_scaling_factor])
-                            output.writerow(['Battery power [kW]',batt_power])
-                            output.writerow(['Battery energy [kWh]',batt_energy])
-                            output.writerow(['Battery hours [kWh]',batt_hrs])
-                            output.writerow(['Generator power [kW]',gen_power])
-                            output.writerow(['Generator tank [gal]',gen_tank])
-                            output.writerow(['Fuel curve A coefficient [gal/h/kW]',gen_fuelA])
-                            output.writerow(['Fuel curve B coefficient [gal/h]',gen_fuelB])
-                            output.writerow([])
-                            output.writerow(['Program call and args',' '.join(sys.argv)])
+                        print('Confidence: 72h={} 336h={} {}h={}'.format(conf_72h,conf_336h,Xh,conf_Xh))
 
                     if output_resilience:
                         if superloop_enabled:
-                              filename = output_dir + '/resilience_{:}_{:.1f}_{:.3f}_{:.0f}_{:.1f}_{:.0f}.csv'.format(site, load_scaling_factor, pv_scaling_factor, batt_power, batt_hrs, gen_power)
+                              filename = output_dir + '/resilience_{:.1f}_{:.3f}_{:.0f}_{:.1f}_{:.0f}.csv'.format(load_scaling_factor, pv_scaling_factor, batt_power, batt_hrs, gen_power)
                         else:
-                            filename = output_dir + '/resilience_{}_{}.csv'.format(site, filename_param)
+                            filename = output_dir + '/resilience_{}.csv'.format(filename_param)
                         with open(filename, 'w') as file:
                             output = csv.writer(file)
                             output.writerow(['Site',site])
-                            output.writerow(['Mamba.py v',__version__])
+                            output.writerow(['mamba.py ver',__version__])
+                            output.writerow(['Load profile ver',load_all.version])
+                            output.writerow(['Solar profile ver',pv_all.version])
                             output.writerow(['Datetime',dt.datetime.now()])
                             output.writerow(['Simulated outage duration [days]',days])
                             output.writerow(['Outages simulated',runs])
+                            output.writerow(['Program call and args',' '.join(sys.argv)])
                             output.writerow([])
                             output.writerow(['PV scaling factor', pv_scaling_factor])
                             output.writerow(['Battery power [kW]',batt_power])
@@ -1878,12 +2049,11 @@ for load_scaling_factor in load_scale_vector:
                             output.writerow(['Generator tank [gal]',gen_tank])
                             output.writerow(['Fuel curve A coefficient [gal/h/kW]',gen_fuelA])
                             output.writerow(['Fuel curve B coefficient [gal/h]',gen_fuelB])
-                            output.writerow(['Pull soc0 from previous dispatch?',vary_soc])
+                            output.writerow(['Pull soc0 from previous dispatch?',vary_soc0])
                             output.writerow([])
                             output.writerow(['Confidence 72 h',conf_72h])
                             output.writerow(['Confidence 336 h',conf_336h])
-                            output.writerow(['Confidence 144 h',conf_144h])
-                            output.writerow(['Confidence 144 h (apr-nov)',conf_144h_apr_nov])
+                            output.writerow(['Confidence {} h'.format(Xh),conf_Xh])
                             output.writerow(['Max TTFF [h]', max_ttff])
                             output.writerow(['Avg TTFF [h]', avg_ttff])
                             output.writerow(['Min TTFF [h]', min_ttff])
@@ -1917,9 +2087,9 @@ if superloop_enabled:
         output.writerow(['Runtime [s]',results.code_runtime_s])
         output.writerow(['Gen tank size [gal]', gen_tank])
         output.writerow([])
-        output.writerow(['Load Scaling factor', 'PV scaling factor','Batt energy [kWh]', 'Batt Power [kW]', 'Batt hrs [h]', 'Generator power [kVA]','Confidence 168h','Confidence 336h','Min TTFF [h]','Avg TTFF [h]', 'Max TTFF [h]','Confidence 144h','Confidence 144h (apr-nov)'])
+        output.writerow(['Load Scaling factor', 'PV scaling factor','Batt energy [kWh]', 'Batt Power [kW]', 'Batt hrs [h]', 'Generator power [kVA]','Confidence 72h','Confidence 336h','Confidence {}h'.format(Xh),'Min TTFF [h]','Avg TTFF [h]', 'Max TTFF [h]'])
         for i in range(len(max_ttff)):
-            output.writerow([load_scale_vals[i],pv_scale_vals[i],batt_energy_vals[i], batt_power_vals[i], batt_hrs_vals[i], gen_power_vals[i], conf_72h[i],conf_336h[i],min_ttff[i],avg_ttff[i],max_ttff[i],conf_144h[i],conf_144h_apr_nov[i]])
+            output.writerow([load_scale_vals[i],pv_scale_vals[i],batt_energy_vals[i], batt_power_vals[i], batt_hrs_vals[i], gen_power_vals[i], conf_72h[i],conf_336h[i],conf_Xh[i],min_ttff[i],avg_ttff[i],max_ttff[i]])
 
 # plots
 if plots_on and (sim == 'ue'):
