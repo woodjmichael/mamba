@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "6.18"
+__version__ = "6.19"
 
 #
 # Versions
 #
 
+#   6.19 - support new dirs: Dropbox/Development and Dropbox/Tools
 #   6.18 - pv, load, and soc profiles from a new file format and location, user-defined confidence duration and "vary soc0" flag, meta in resilience/vector csv's
 #   6.17.1 - quick branch: report 144h confidence (overall and just apr-nov), change some file outputs
 #   6.17 - entech hacks: hardcode demand targets, vectors, graphs
@@ -535,7 +536,6 @@ def help_printout():
     print('     careful: -bd just changes the battery energy, so soc will still be 0-100%')
     print(' Plots ON (option to plot normal or utility first):    --plots [ | u]                     e.g. --plots     default=OFF')
     print('Debug (see code):        --debug [arg]               e.g. --debug demand')
-    print('Dev (see code):          -d                          e.g. -d')
     print('')
 
 #
@@ -682,8 +682,7 @@ def import_load_data_ue(site, load_stats):
 
 def import_load_data_vc(site, load_stats=False):
 
-    filename = '../Profiles VC/Load/profile_load_' + site + '.csv'
-    if dev: filename = '../../../muGrid Analytics Dropbox/Profiles VC/Load/profile_load_' + site + '.csv'
+    filename = '../../Profiles VC/Load/profile_load_' + site + '.csv'
 
     with open(filename,'r') as f:
         datacsv = list(csv.reader(f, delimiter=","))
@@ -764,8 +763,7 @@ def import_pv_data(site):
 
 def import_pv_data_vc(site):
 
-    filename = '../Profiles VC/Solar/profile_solar_' + site + '.csv'
-    if dev: filename = '../../../muGrid Analytics Dropbox/Profiles VC/Solar/profile_solar_' + site + '.csv'
+    filename = '../../Profiles VC/Solar/profile_solar_' + site + '.csv'
 
     with open(filename,'r') as f:
         datacsv = list(csv.reader(f, delimiter=","))
@@ -796,14 +794,7 @@ def import_pv_data_vc(site):
 
 def import_soc_vc(site):
 
-    ##filename = './Data/Dispatch/soc_' + site + '_35040.csv'
-    #filename = '../Profiles VC/SOC/profile_soc_' + site + '.csv'
-    #if dev: filename = '../../../muGrid Analytics Dropbox/Profiles VC/SOC/profile_soc_' + site + '.csv'
-    #vals = np.genfromtxt(filename, delimiter=',')
-    #dispatch_previous.soc_nf = np.concatenate((vals[1:],vals[1:]),axis=0)
-
-    filename = '../Profiles VC/SOC/profile_soc_' + site + '.csv'
-    if dev: filename = '../../../muGrid Analytics Dropbox/Profiles VC/SOC/profile_soc_' + site + '.csv'
+    filename = '../../Profiles VC/SOC/profile_soc_' + site + '.csv'
 
     with open(filename,'r') as f:
         datacsv = list(csv.reader(f, delimiter=","))
@@ -1645,9 +1636,6 @@ debug_indexing = 0
 debug_res = 0
 batt_vector_print = 0
 
-# etc
-dev = False
-
 # command line run options override defaults
 if len(sys.argv) > 1:
 
@@ -1763,10 +1751,6 @@ if len(sys.argv) > 1:
         elif sys.argv[i] == '--loadstats':
             load_stats = True
 
-        elif sys.argv[i] == '--dev':
-            dev = True
-            __version__ = __version__ + '_dev'
-
         elif sys.argv[i] == '--debug':
 
             debug = 1                       # basic debug only
@@ -1828,7 +1812,6 @@ if len(sys.argv) > 1:
 
         elif sys.argv[i] == '--test':
             site = 'mugrid_test'
-            dev = True
             debug = 1
             debug_energy = 1
             batt_power = 2.         # kw
