@@ -6,12 +6,14 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "6.19"
+__version__ = "6.20"
 
 #
 # Versions
 #
 
+
+#   6.20 - resilience wasn't keeping gen at 100%, unfinished dev on 2 generator resilience
 #   6.19 - support new dirs: Dropbox/Development and Dropbox/Tools
 #   6.18 - pv, load, and soc profiles from a new file format and location, user-defined confidence duration and "vary soc0" flag, meta in resilience/vector csv's
 #   6.17.1 - quick branch: report 144h confidence (overall and just apr-nov), change some file outputs
@@ -146,6 +148,7 @@ class GenClass:
         me.on_time = me.min_on_time
         me.off_time = me.min_off_time
         me.prev_power = 0
+        me.on = False
 
     def clear(me):
         me.P_kw_nf.fill(0)
@@ -153,18 +156,32 @@ class GenClass:
         me.fuelConsumedTotal = 0
 
     def power_request(me, i, p_req):
-        if (p_req > 0) & (p_req < 0.001):
-            p_req = 0
+        if abs(p_req) < 0.001: p_req = 0
 
         if (p_req > 0) & me.cool_down_complete():
             p_final = min(p_req,  me.Pn_kw, me.Pmax_tank())
         elif (p_req == 0) & me.warm_up_complete():
             p_final = 0.
         else:
-            p_final = 0.
+            p_final = me.prev_power
         me.on_off_counter(p_final)
         me.P_kw_nf[i] = np.array([p_final])
         me.fuel_calc(i, p_final)
+        return p_final
+
+    def power_check(me, i, p_req):
+        if abs(p_req) < 0.001: p_req = 0
+
+        if (p_req > 0) & me.cool_down_complete():
+            p_final = min(p_req,  me.Pn_kw, me.Pmax_tank())
+        elif (p_req == 0) & me.warm_up_complete():
+            p_final = 0.
+        else:
+            p_final = me.prev_power
+
+        #me.on_off_counter(p_final)
+        #me.P_kw_nf[i] = np.array([p_final])
+        #me.fuel_calc(i, p_final)
         return p_final
 
     def Pmax_tank(me):
@@ -276,6 +293,9 @@ class BattClass:
         me.soc_flag = 0                             # binary
         me.eff_chg = 0.95
         me.eff_dischg = 0.95
+        me.charging = False
+        me.discharging = True
+
 
     def clear(me):
         me.soc_prev = me.soc0
@@ -283,6 +303,8 @@ class BattClass:
         me.soc_nf.fill(0)
         me.soc_flag = 0
 
+    # set the power at a desired value, subject to soc and min/max constraints
+        # (may only be called once per timestep)
     def power_request(me, index, p_req):
         if p_req > 0:
             p_final = min(p_req, me.Pn_kw, me.P_max_soc())
@@ -296,6 +318,8 @@ class BattClass:
         return p_final
 
     def sum_power_request(me, index, p_req):
+        print('broken! see mamba.md  -> To Do')
+        quit()
         if p_req > 0:
             p_final = min(p_req, me.Pn_kw, me.P_max_soc())
         elif p_req < 0:
@@ -307,6 +331,40 @@ class BattClass:
         me.P_kw_nf[index] += p_final
         return p_final
 
+    def sum_power_request2(me, i, new_request):
+        # add to existing requests to validate
+        total_request = new_request + me.P_kw_nf[i]
+
+        # validate against power limits
+        if request > 0:
+            power = min(total_request, me.Pn_kw, me.P_max_soc())
+        elif p_req < 0:
+            power = max(total_request, -me.Pn_kw, me.P_min_soc())
+        else:
+            power = 0.
+
+        if abs(power) < 0.001: power = 0 # clean (maybe not necessary)
+
+        # update power
+        me.P_kw_nf[i] = power
+
+        # update soc at end of timestep
+        #me.soc_nf[i] = me.soc_update(power)
+
+        return power
+
+    # ask *if* power could be set at desired value given constraints
+    def power_check(me, index, p_req):
+        if p_req > 0:
+            p_final = min(p_req, me.Pn_kw, me.P_max_soc())
+        elif p_req < 0:
+            p_final = max(p_req, -me.Pn_kw, me.P_min_soc())
+        else:
+            p_final = 0.
+        if abs(p_final) < 0.001: p_final = 0
+        #me.soc_nf[index] = me.soc_update(p_final)
+        #me.P_kw_nf[index] = p_final
+        return p_final
 
     def soc_update(me,p_soc):
         if p_soc > 0:
@@ -326,17 +384,25 @@ class BattClass:
         return -1*(1 - me.soc_prev) * me.En_kwh * (3600.0/me.timestep) * me.eff_chg
 
     def empty(me,i):
-        return (me.soc_nf[i] < 0.001)
+        return (me.soc_prev < 0.001)
 
     def full(me,i):
-        return (me.soc_nf[i] > 0.999)
+        return (me.soc_prev > 0.999)
 
     def over_half(me,i):
-        return (me.soc_nf[i] > 0.5)
+        return (me.soc_prev > 0.5)
 
     def set_soc0(me,soc):
         me.soc0 = soc
         me.soc_prev = soc
+
+    def discharge(me):
+        me.discharging=True
+        me.charging=False
+
+    def charge(me):
+        me.discharging=False
+        me.charging=True
 
 #
 # PV Class
@@ -375,9 +441,6 @@ class DemandTargetsClass:
         me.import_tou_schedule(site)    # optional
 
     def import_demand_targets(me,site):
-        print ('broken!')
-        quit()
-
         filename = './Data/Demand targets/' + site + '_demand_targets.csv'
         try:
             me.monthly = np.genfromtxt(filename, delimiter=',')[1:]
@@ -389,9 +452,6 @@ class DemandTargetsClass:
             quit()
 
     def import_tou_schedule(me,site):
-        print ('broken!')
-        quit()
-
         filename = './Data/Demand targets/' + site + '_tou_schedule.csv'
         try:
             me.tou_sched = np.genfromtxt(filename, dtype=int, delimiter=',')[1:]
@@ -951,7 +1011,373 @@ def simulate_resilience(t_0,L):
     # begin battery with the soc from a previous year-long utility-on simulation
     if vary_soc0: bat.set_soc0(dispatch_previous.soc_nf[t_0])
 
-    chg = 0
+    for i in range(L):
+        i_pv = i
+
+        LSimbalance = load.P_kw_nf[i]      -   pv.P_kw_nf[i_pv]   # load-solar imbalance
+
+        #if bat.full(i) or (bat.over_half(i) and (pv.P_kw_nf[i_pv] > 0)):
+        #    gen.on = False
+
+        if bat.full(i) or (bat.over_half(i) and (pv.P_kw_nf[i_pv] > 0)):
+            gen.on = False
+        elif bat.empty(i):
+            gen.on = True
+
+        if gen.tank_empty():
+            genpower = gen.power_request(i,0)
+            battpower = bat.power_request(i,LSimbalance)
+
+        else:
+            if not gen.on:
+
+                if LSimbalance <= bat.power_check(i,LSimbalance):
+                    genpower = gen.power_request(i,0)
+                    battpower = bat.power_request(i,LSimbalance + genpower)
+
+                else:
+                    gen.on = True
+
+            if gen.on:
+                    genpower = gen.power_request(i,gen.Pn_kw)
+                    battpower = bat.power_request(i,LSimbalance - genpower)
+
+        LSBGimbalance = LSimbalance - battpower  -   genpower        # load-solar-batt-gen imbalance
+
+        # check if load is fully served
+        if(LSBGimbalance > 0.1):    microgrid.failed()
+        else:                       microgrid.timer_tick()
+
+        gridpower = grid.power_request(i,LSBGimbalance)
+
+        if gridpower <= 0:          grid.offlineCounter += 1      # time that microgrid powers load
+
+
+        # check energy balance
+        if np.absolute((LSimbalance - bat.P_kw_nf[i] - gen.P_kw_nf[i] - grid.P_kw_nf.item(i))) > 0.001:
+            err.energy_balance()
+
+    time_to_grid_import = microgrid.time_to_failure/(3600./load.timestep)
+
+    # vectors
+    if output_vectors:
+        filename = output_dir + '/vectors_{}.csv'.format(filename_param)
+        with open(filename, 'w') as file:
+            output = csv.writer(file)
+            output.writerow(['Site',site])
+            output.writerow(['mamba.py ver',__version__])
+            output.writerow(['Load profile ver',load_all.version])
+            output.writerow(['Solar profile ver',pv_all.version])
+            output.writerow(['Datetime',dt.datetime.now()])
+            output.writerow(['Simulated outage duration [days]',days])
+            output.writerow(['Outages simulated',runs])
+            output.writerow(['Program call and args',' '.join(sys.argv)])
+            output.writerow([])
+            output.writerow(['PV scaling factor', pv_scaling_factor])
+            output.writerow(['Battery power [kW]',batt_power])
+            output.writerow(['Battery energy [kWh]',batt_energy])
+            output.writerow(['Battery hours [kWh]',batt_hrs])
+            output.writerow(['Generator power [kW]',gen_power])
+            output.writerow(['Generator tank [gal]',gen_tank])
+            output.writerow(['Fuel curve A coefficient [gal/h/kW]',gen_fuelA])
+            output.writerow(['Fuel curve B coefficient [gal/h]',gen_fuelB])
+            output.writerow(['Pull soc0 from previous dispatch?',vary_soc0])
+            output.writerow([])
+            output.writerow(['datetime','load kW','pv kW','batt kw','batt soc','gen kW','fuel gal','grid kW'])
+            for i in range(L):
+                if solar_data_inverval_15min:
+                    i_pv = i
+                else:
+                    i_pv = i//4 # only increment i_pv every 4 i-increments
+                l=load.P_kw_nf.item(i)
+                p=pv.P_kw_nf.item(i_pv)
+                b=bat.P_kw_nf.item(i)
+                s=bat.soc_nf.item(i)
+                g=gen.P_kw_nf.item(i)
+                f=gen.fuelConsumed_gal_nf.item(i)
+                G=grid.P_kw_nf.item(i)
+                output.writerow([load.datetime[i],l,p,b,s,g,f,G])
+
+    return time_to_grid_import
+
+#
+# Simulate resilience (from commit d36a4ca)
+#
+
+def simulate_resilience_twogens(t_0,L):
+
+    #
+    # Slice data
+    #
+
+    # temporarily store small chunk "all load" vector in "load"
+
+    # where in "all load" data this run will begin
+    m_0 = t_0 + load_all.offset    # offset usually 0
+
+    # where in "all load" data this run will end
+    m_end = m_0 + L
+
+    load.P_kw_nf = load_all.P_kw_nf[m_0:m_end]
+    load.datetime = load_all.datetime[m_0:m_end]
+
+    if debug_indexing:
+        print('LOAD')
+        print('m_0={:d}'.format(m_0) + ' m_end={:d}'.format(m_end))
+        print(load.datetime[0])
+        print(load.datetime[-1])
+        print(load.P_kw_nf.size)
+        print(len(load.datetime))
+        print('')
+
+    # temporarily store small chunk "all pv" vector in "pv"
+
+
+
+    if solar_data_inverval_15min:
+        n_0 = t_0 + pv_all.offset
+        n_end = n_0 + L
+
+    else:
+        # where in "all PV" data this run will begin
+        n_0 = t_0//4 + pv_all.offset      # offset usually 0
+
+        # where in "all load" data this run will end
+        n_end = n_0 + L//4                # offset usually 0
+
+
+
+    pv.P_kw_nf = pv_all.P_kw_nf[n_0:n_end]
+    pv.datetime = pv_all.datetime[n_0:n_end]
+
+    if debug_indexing:
+        print('PV')
+        print('n_0={:d}'.format(n_0) + ' n_end={:d}'.format(n_end))
+        print(pv.datetime[0])
+        print(pv.datetime[-1])
+        print(pv.P_kw_nf.size)
+        print(len(pv.datetime))
+        print('')
+
+    # check indexing
+    # beginning and ending date and hour should match between load and pv
+    if (load.datetime[0].day    - pv.datetime[0].day):
+        err.indexing()
+    if (load.datetime[-1].day   - pv.datetime[-1].day):
+        err.indexing()
+    if (load.datetime[0].hour   - pv.datetime[0].hour):
+        err.indexing()
+    if (load.datetime[-1].hour  - pv.datetime[-1].hour):
+        err.indexing()
+
+
+    #
+    # Algorithm
+    #
+
+
+    # begin battery with the soc from a previous year-long utility-on simulation
+    if vary_soc0: bat.set_soc0(dispatch_previous.soc_nf[t_0])
+
+    gens_on = False
+    n_gens_prev = 0
+    n_gens = 0
+
+    for i in range(L):
+        i_pv = i
+
+        LSimbalance = load.P_kw_nf[i]      -   pv.P_kw_nf[i_pv]   # load-solar imbalance
+
+        #if bat.full(i) or (bat.over_half(i) and (pv.P_kw_nf[i_pv] > 0)):
+        #    gen.on = False
+
+        if bat.full(i) or (bat.over_half(i) and (pv.P_kw_nf[i_pv] > 0)):
+            gens_on = False
+        elif bat.empty(i):
+            gens_on = True
+
+        if gen.tank_empty() and gen2.tank_empty():
+            genpower = gen.power_request(i,0)
+            genpower2 = gen2.power_request(i,0)
+            battpower = bat.power_request(i,LSimbalance)
+
+        else:
+
+            if not gens_on:
+
+                if LSimbalance <= bat.power_check(i,LSimbalance):
+                    genpower = gen.power_request(i,0)
+                    genpower2 = gen2.power_request(i,0)
+                    battpower = bat.power_request(i,LSimbalance + genpower)
+
+                else:
+                    gens_on = True
+
+            # charging
+            if gens_on:
+                n_gens = np.trunc(LSimbalance/(2*gen.Pn_kw)) + 1
+                imbal_up = n_gens*gen.Pn_kw - LSimbalance
+                imbal_dn = LSimbalance - (n_gens-1)*gen.Pn_kw
+
+                if (n_gens > n_gens_prev) & (imbal_dn < bat.Pn_kW):
+                    battpower = bat.power_request(i,imbal_up)
+
+
+                if LSimbalance > (gen.Pn_kw + bat.power_check(i,bat.Pn_kw)):
+                    genpower = gen.power_request(i,gen.Pn_kw)
+                    genpower2 = gen2.power_request(i,gen.Pn_kw)
+                    battpower = bat.power_request(i,LSimbalance - genpower - genpower2)
+                elif LSimbalance > bat.power_check(i,bat.Pn_kw):
+                    genpower = gen.power_request(i,gen.Pn_kw)
+                    genpower2 = gen2.power_request(i,0)
+                    battpower = bat.power_request(i,LSimbalance - genpower)
+                else:
+                    gens_on = False
+                    battpower = bat.power_request(i,LSimbalance)
+                    genpower = gen.power_request(i,0)
+                    genpower2 = gen2.power_request(i,0)
+
+        LSBGimbalance = LSimbalance - battpower  -   genpower - genpower2        # load-solar-batt-gen imbalance
+
+        # check if load is fully served
+        if(LSBGimbalance > 0.1):    microgrid.failed()
+        else:                       microgrid.timer_tick()
+
+        gridpower = grid.power_request(i,LSBGimbalance)
+
+        if gridpower <= 0:          grid.offlineCounter += 1      # time that microgrid powers load
+
+
+        # check energy balance
+        if np.absolute((LSimbalance - bat.P_kw_nf[i] - gen.P_kw_nf[i] - gen2.P_kw_nf[i] - grid.P_kw_nf.item(i))) > 0.001:
+            err.energy_balance()
+
+    time_to_grid_import = microgrid.time_to_failure/(3600./load.timestep)
+
+    # vectors
+    if output_vectors:
+        filename = output_dir + '/vectors_{}.csv'.format(filename_param)
+        with open(filename, 'w') as file:
+            output = csv.writer(file)
+            output.writerow(['Site',site])
+            output.writerow(['mamba.py ver',__version__])
+            output.writerow(['Load profile ver',load_all.version])
+            output.writerow(['Solar profile ver',pv_all.version])
+            output.writerow(['Datetime',dt.datetime.now()])
+            output.writerow(['Simulated outage duration [days]',days])
+            output.writerow(['Outages simulated',runs])
+            output.writerow(['Program call and args',' '.join(sys.argv)])
+            output.writerow([])
+            output.writerow(['PV scaling factor', pv_scaling_factor])
+            output.writerow(['Battery power [kW]',batt_power])
+            output.writerow(['Battery energy [kWh]',batt_energy])
+            output.writerow(['Battery hours [kWh]',batt_hrs])
+            output.writerow(['Generator power [kW]',gen_power])
+            output.writerow(['Generator tank [gal]',gen_tank])
+            output.writerow(['Fuel curve A coefficient [gal/h/kW]',gen_fuelA])
+            output.writerow(['Fuel curve B coefficient [gal/h]',gen_fuelB])
+            output.writerow(['Pull soc0 from previous dispatch?',vary_soc0])
+            output.writerow([])
+            output.writerow(['datetime','load kW','pv kW','batt kw','batt soc','gen kW','gen2 kW','fuel gal','grid kW'])
+            for i in range(L):
+                if solar_data_inverval_15min:
+                    i_pv = i
+                else:
+                    i_pv = i//4 # only increment i_pv every 4 i-increments
+                l=load.P_kw_nf.item(i)
+                p=pv.P_kw_nf.item(i_pv)
+                b=bat.P_kw_nf.item(i)
+                s=bat.soc_nf.item(i)
+                g=gen.P_kw_nf.item(i)
+                g2=gen2.P_kw_nf.item(i)
+                f=gen.fuelConsumed_gal_nf.item(i)
+                G=grid.P_kw_nf.item(i)
+                output.writerow([load.datetime[i],l,p,b,s,g,g2,f,G])
+
+    return time_to_grid_import
+
+
+#
+# Simulate resilience (from commit d36a4ca)
+#
+
+def simulate_resilience_multigens(t_0,L):
+
+    #
+    # Slice data
+    #
+
+    # temporarily store small chunk "all load" vector in "load"
+
+    # where in "all load" data this run will begin
+    m_0 = t_0 + load_all.offset    # offset usually 0
+
+    # where in "all load" data this run will end
+    m_end = m_0 + L
+
+    load.P_kw_nf = load_all.P_kw_nf[m_0:m_end]
+    load.datetime = load_all.datetime[m_0:m_end]
+
+    if debug_indexing:
+        print('LOAD')
+        print('m_0={:d}'.format(m_0) + ' m_end={:d}'.format(m_end))
+        print(load.datetime[0])
+        print(load.datetime[-1])
+        print(load.P_kw_nf.size)
+        print(len(load.datetime))
+        print('')
+
+    # temporarily store small chunk "all pv" vector in "pv"
+
+
+
+    if solar_data_inverval_15min:
+        n_0 = t_0 + pv_all.offset
+        n_end = n_0 + L
+
+    else:
+        # where in "all PV" data this run will begin
+        n_0 = t_0//4 + pv_all.offset      # offset usually 0
+
+        # where in "all load" data this run will end
+        n_end = n_0 + L//4                # offset usually 0
+
+
+
+    pv.P_kw_nf = pv_all.P_kw_nf[n_0:n_end]
+    pv.datetime = pv_all.datetime[n_0:n_end]
+
+    if debug_indexing:
+        print('PV')
+        print('n_0={:d}'.format(n_0) + ' n_end={:d}'.format(n_end))
+        print(pv.datetime[0])
+        print(pv.datetime[-1])
+        print(pv.P_kw_nf.size)
+        print(len(pv.datetime))
+        print('')
+
+    # check indexing
+    # beginning and ending date and hour should match between load and pv
+    if (load.datetime[0].day    - pv.datetime[0].day):
+        err.indexing()
+    if (load.datetime[-1].day   - pv.datetime[-1].day):
+        err.indexing()
+    if (load.datetime[0].hour   - pv.datetime[0].hour):
+        err.indexing()
+    if (load.datetime[-1].hour  - pv.datetime[-1].hour):
+        err.indexing()
+
+
+    #
+    # Algorithm
+    #
+
+
+    # begin battery with the soc from a previous year-long utility-on simulation
+    if vary_soc0: bat.set_soc0(dispatch_previous.soc_nf[t_0])
+
+    charging = False
+    n_gens_prev = 0
 
     for i in range(L):
 
@@ -963,26 +1389,39 @@ def simulate_resilience(t_0,L):
 
         LSimbalance = load.P_kw_nf[i]      -   pv.P_kw_nf[i_pv]   # load-solar imbalance
 
-        if not gen.tank_empty():
+        # dispatch battery
+        if 0:
+            battpower_checked =  bat.power_check(i,LSimbalance)
+            imbalance = LSimbalance - battpower_checked
+
+            n_gens =  np.trunc(LSimbalance/gen.Pn_kw) + 1 # nominal number of gens
+
+            # with multiple gens, can decide how many to turn on based on this
+            imbal_up =  n_gens*gen.Pn_kw -  imbalance
+            imbal_dn =  imbalance -  (n_gens-1)*gen.Pn_kw
+
+        if not (gen.tank_empty() and gen2.tank_empty()):
 
             if bat.empty(i):
-                chg = 1
+                charging = True
             elif bat.full(i) or (bat.over_half(i) and (pv.P_kw_nf[i_pv] > 0)):
-                chg = 0
+                charging = False
 
-            if chg == 0:
+            # better to fully discharge battery to meet load?           <-- this
+            # or, once gen is on, turn it on fully and save some batt?
+            if not charging:
                 battpower = bat.power_request(i,LSimbalance)
-                LSBimbalance =  LSimbalance - battpower       # load-solar-batt imbalance
-                genpower = gen.power_request(i,LSBimbalance)
+                genpower = gen.power_request(i,LSimbalance - battpower)
+                genpower2 = gen2.power_request(i,LSimbalance - battpower - genpower)
 
-            elif chg == 1:
-                LSGimbalance = LSimbalance - gen.Pn_kw
+            elif charging:
+                genpower = gen.power_request(i,LSimbalance+bat.Pn_kw)
                 battpower = bat.power_request(i,LSGimbalance)
                 LSBimbalance = LSimbalance - battpower
-                genpower = gen.power_request(i,LSBimbalance)
+
 
         elif gen.tank_empty():
-            chg = 0
+            charging = False
             battpower = bat.power_request(i,LSimbalance)
             LSBimbalance = LSimbalance - battpower
             genpower = gen.power_request(i,0)
@@ -1623,6 +2062,7 @@ gen_power = 0.           # kw
 gen_tank = 0.          # gal
 gen_fuel_propane = 0    # 1 = propane, 0 = diesel
 calc_energy_from_hrs = 0  # batt power such that capacity = 1h
+twogens = False
 
 # outputs on/off
 output_resilience = 0
@@ -1680,6 +2120,15 @@ if len(sys.argv) > 1:
                 days = 14                          # length of grid outage
                 L = days*24*4                     # length of simulation in timesteps
                 output_resilience = 1
+
+            elif sim == 'r2g':
+                grid_online = 0
+                simulation_interval = 3
+                runs = 365*24//simulation_interval   # number of iterations
+                days = 14                          # length of grid outage
+                L = days*24*4                     # length of simulation in timesteps
+                output_resilience = 1
+                twogens = True
 
             elif sim == 'ua':
                 grid_online = 1
@@ -1957,6 +2406,8 @@ for load_scaling_factor in load_scale_vector:
                             load3 =  DataClass(  15.*60.,L)                 # timestep[s]
                         pv =    PVClass(  15.*60.,L)                   # timestep[s]
                         gen =   GenClass(   gen_power,gen_fuelA,gen_fuelB,gen_tank,15.*60.,L)   # kW, fuel A, fuel B, tank[gal], tstep[s]
+                        if twogens:
+                            gen2 =   GenClass(   gen_power,gen_fuelA,gen_fuelB,gen_tank,15.*60.,L)   # kW, fuel A, fuel B, tank[gal], tstep[s]
                         bat =   BattClass(  batt_power,batt_energy,1,15*60.,L)      # kW, kWh, soc0 tstep[s]
                         grid =  GridClass(  1000.,L)                    # kW
                         if sim == 'ue':
@@ -1972,7 +2423,11 @@ for load_scaling_factor in load_scale_vector:
                         #
                         # run the dispatch simulation
                         #
-                        if not grid_online:
+                        if not grid_online and twogens:
+                            results.time_to_grid_import_h_nf[i] = simulate_resilience_twogens(t0,L)
+                            # calculate one last result
+                            results.onlineTime_h_ni[i] = grid.offlineCounter/4.
+                        elif not grid_online:
                             results.time_to_grid_import_h_nf[i] = simulate_resilience(t0,L)
                             # calculate one last result
                             results.onlineTime_h_ni[i] = grid.offlineCounter/4.
@@ -2250,6 +2705,48 @@ if plots_on and (sim == 'ue'):
 
     plt.show()
 
+
+elif plots_on and twogens:
+    #plt.style.use('dark_background')
+    #plt.rcParams['axes.prop_cycle']
+
+    # plot type
+    fig, ax1 = plt.subplots(figsize=(20,8.5))
+    ax2 = ax1.twinx()
+
+    # main vectors
+    t = np.arange(1., L+1., 1.)
+    p = pv.P_kw_nf
+    l = load.P_kw_nf
+    g = gen.P_kw_nf
+    g2 = gen2.P_kw_nf
+    d = np.clip(bat.P_kw_nf,0,10000)
+    c = -1*np.clip(bat.P_kw_nf,-10000,0)
+    u = np.clip(grid.P_kw_nf,0,10000)
+
+    # plot load and soc
+    ax1.plot(t, l,           'k',    label='load', linewidth=0.5)
+    ax1.plot(t, l+c,         'k--',  label='load + batt charge', linewidth=0.5)
+    ax2.plot(t, bat.soc_nf,  'b:',   label='soc', linewidth=0.5)
+
+    # area plots
+    ax1.fill_between(t, 0,      p,          facecolor='lightyellow', label='pv')#, interpolate=True)
+    ax1.fill_between(t, p,      p+d,        facecolor='lightblue',  label='batt discharge')#, interpolate=True)
+    ax1.fill_between(t, p+d,    p+d+g,      facecolor='lightgreen', label='gen')#, interpolate=True)
+    ax1.fill_between(t, p+d+g,  p+d+g+g2,   facecolor='green', label='gen2')#, interpolate=True)
+
+    ax1.set_xlabel('timestep')
+    ax1.set_ylabel('power [kW]')
+    ax2.set_ylabel('SOC')
+
+    ax1.legend(loc='upper left')
+    ax2.legend(loc='upper right')
+    ax1.set_xlim(1,L)
+    ax1.set_ylim(0,1.1*np.max([l+c,p+d+u,p+d+g,u+p+d]))
+    ax2.set_ylim(0,1.1)
+
+    plt.show()
+
 elif plots_on:
     #plt.style.use('dark_background')
     #plt.rcParams['axes.prop_cycle']
@@ -2303,16 +2800,10 @@ elif plots_on:
     ax1.legend(loc='upper left')
     ax2.legend(loc='upper right')
     ax1.set_xlim(1,L)
-    ax1.set_ylim(0,1.1*np.max([p,l,g,d,c,u]))
+    ax1.set_ylim(0,1.1*np.max([l+c,p+d+u,p+d+g,u+p+d]))
     ax2.set_ylim(0,1.1)
 
-    #fig.tight_layout()
     plt.show()
-
-    # if debug_demand:
-    #     plt.plot(load.datetime,grid.P_kw_nf)
-    #     plt.show()
-
 
 # print errors
 err.print_faults()
