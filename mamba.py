@@ -6,13 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "6.20"
+__version__ = "6.21"
 
 #
 # Versions
 #
 
-
+#   6.21 - peak shaving with la jolla custom charging window (12-6am)
 #   6.20 - resilience wasn't keeping gen at 100%, unfinished dev on 2 generator resilience
 #   6.19 - support new dirs: Dropbox/Development and Dropbox/Tools
 #   6.18 - pv, load, and soc profiles from a new file format and location, user-defined confidence duration and "vary soc0" flag, meta in resilience/vector csv's
@@ -437,13 +437,15 @@ class DemandTargetsClass:
         me.tou_sched = np.zeros((12,1), dtype=int)
         me.tou_levels = 1               # number of TOU levels
         me.tou_res_minutes = 60         # TOU schedule resolution in minutes
+
         me.import_demand_targets(site)  # mandatory
         me.import_tou_schedule(site)    # optional
+
 
     def import_demand_targets(me,site):
         filename = './Data/Demand targets/' + site + '_demand_targets.csv'
         try:
-            me.monthly = np.genfromtxt(filename, delimiter=',')[1:]
+            me.monthly = np.genfromtxt(filename, delimiter=',')[1:13]
             if me.monthly.ndim == 1:
                 me.monthly = np.expand_dims(me.monthly, axis=1)   # make sure targets array is 2D
 
@@ -1578,12 +1580,23 @@ def simulate_utility_on(t_0,L):
             LSBimbalance = LSimbalance - battpower
             gpower = grid.power_request(i, LSBimbalance)
 
+        # peak shaving with charging batt from grid during certain hours
+        elif peak_shaving and grid_charging and charging_period:
+                demand_target = demand_targets.get(i)
+                if load.datetime[i].hour > 6:
+                    if LSimbalance > demand_target:
+                        battpower = bat.power_request(i,LSimbalance - demand_target)
+                    else:
+                        battpower = bat.power_request(i,0)
+                else:
+                    battpower = bat.power_request(i,LSimbalance - demand_target)
+                gpower = grid.power_request(i,LSimbalance - battpower)
+
         # peak shaving with charging batt from grid
         elif peak_shaving and grid_charging:
             demand_target = demand_targets.get(i)
             battpower = bat.power_request(i,LSimbalance - demand_target)
-            LSBimbalance = LSimbalance - battpower
-            gpower = grid.power_request(i,LSBimbalance)
+            gpower = grid.power_request(i,LSimbalance - battpower)
 
 
         # fringe case: peak shaving without charging batt from grid
@@ -1642,7 +1655,7 @@ def simulate_utility_on(t_0,L):
             output.writerow(['Fuel curve B coefficient [gal/h]',gen_fuelB])
             output.writerow(['Pull soc0 from previous dispatch?',vary_soc0])
             output.writerow([])
-            output.writerow(['datetime','load kW','pv kW','batt kw','batt soc','gen kW','fuel gal','grid kW'])
+            output.writerow(['datetime','load kW','pv kW','batt kw','batt soc','gen kW','fuel gal','grid kW','demand target kW'])
             for i in range(L):
                 if solar_data_inverval_15min:
                     i_pv = i
@@ -1655,7 +1668,9 @@ def simulate_utility_on(t_0,L):
                 g=gen.P_kw_nf.item(i)
                 f=gen.fuelConsumed_gal_nf.item(i)
                 G=grid.P_kw_nf.item(i)
-                output.writerow([load.datetime[i],l,p,b,s,g,f,G])
+                if peak_shaving: t=demand_targets.get(i)
+                else: t=''
+                output.writerow([load.datetime[i],l,p,b,s,g,f,G,t])
 
     # print a single vector
     if batt_vector_print:
@@ -2044,6 +2059,7 @@ hard_code_superloop = 0
 peak_shaving = 0
 grid_online = 0
 grid_charging = 0
+charging_period = False
 entech = 0
 PS_arb_thresh = 0.4
 demand_target = 0
@@ -2107,6 +2123,9 @@ if len(sys.argv) > 1:
         elif sys.argv[i] == '-bd':
             dod = float(sys.argv[i+1])
             batt_energy = batt_energy * dod
+
+        elif sys.argv[i] == '-cp':
+            charging_period = True
 
         elif sys.argv[i] == '-gp':
             gen_power = float(sys.argv[i+1])
