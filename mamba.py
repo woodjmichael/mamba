@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "6.21"
+__version__ = "6.21.1"
 
 #
 # Versions
 #
 
+#   6.21.1 - batt efficiency arg, debug demand output
 #   6.21 - peak shaving with la jolla custom charging window (12-6am)
 #   6.20 - resilience wasn't keeping gen at 100%, unfinished dev on 2 generator resilience
 #   6.19 - support new dirs: Dropbox/Development and Dropbox/Tools
@@ -291,8 +292,8 @@ class BattClass:
         me.P_kw_nf = np.zeros((length,), dtype=float)
         me.soc_nf = soc0 * np.ones((length,), dtype=float)
         me.soc_flag = 0                             # binary
-        me.eff_chg = 0.95
-        me.eff_dischg = 0.95
+        me.eff_chg = batt_eff
+        me.eff_dischg = batt_eff
         me.charging = False
         me.discharging = True
 
@@ -504,10 +505,6 @@ class DemandTargetsClass:
         month = load.datetime[i].month
 
         tou_level_now = me.get_tou_level(i)
-
-        if debug_demand:
-            if i<=95:
-                print('{} {} tou_res {} tou_level_now {} demand_target {}'.format(i,load.datetime[i],me.tou_res_minutes,tou_level_now,me.monthly[month-1,tou_level_now]))
 
         return me.monthly[month-1,tou_level_now]
 
@@ -956,6 +953,7 @@ def simulate_resilience(t_0,L):
     load.datetime = load_all.datetime[m_0:m_end]
 
     if debug_indexing:
+        print('** debug indexing **\n')
         print('LOAD')
         print('m_0={:d}'.format(m_0) + ' m_end={:d}'.format(m_end))
         print(load.datetime[0])
@@ -1124,6 +1122,7 @@ def simulate_resilience_twogens(t_0,L):
     load.datetime = load_all.datetime[m_0:m_end]
 
     if debug_indexing:
+        print('** debug indexing **\n')
         print('LOAD')
         print('m_0={:d}'.format(m_0) + ' m_end={:d}'.format(m_end))
         print(load.datetime[0])
@@ -1221,7 +1220,7 @@ def simulate_resilience_twogens(t_0,L):
                 imbal_up = n_gens*gen.Pn_kw - LSimbalance
                 imbal_dn = LSimbalance - (n_gens-1)*gen.Pn_kw
 
-                if (n_gens > n_gens_prev) & (imbal_dn < bat.Pn_kW):
+                if (n_gens > n_gens_prev) & (imbal_dn < bat.Pn_kw):
                     battpower = bat.power_request(i,imbal_up)
 
 
@@ -1321,6 +1320,7 @@ def simulate_resilience_multigens(t_0,L):
     load.datetime = load_all.datetime[m_0:m_end]
 
     if debug_indexing:
+        print('** debug indexing **\n')
         print('LOAD')
         print('m_0={:d}'.format(m_0) + ' m_end={:d}'.format(m_end))
         print(load.datetime[0])
@@ -1513,6 +1513,7 @@ def simulate_utility_on(t_0,L):
     load.datetime = load_all.datetime[m_0:m_end]
 
     if debug_indexing:
+        print('** debug indexing **\n')
         print('LOAD')
         print('m_0={:d}'.format(m_0) + ' m_end={:d}'.format(m_end))
         print(load.datetime[0])
@@ -1582,15 +1583,18 @@ def simulate_utility_on(t_0,L):
 
         # peak shaving with charging batt from grid during certain hours
         elif peak_shaving and grid_charging and charging_period:
-                demand_target = demand_targets.get(i)
-                if load.datetime[i].hour > 6:
-                    if LSimbalance > demand_target:
-                        battpower = bat.power_request(i,LSimbalance - demand_target)
-                    else:
-                        battpower = bat.power_request(i,0)
-                else:
+            demand_target = demand_targets.get(i)
+
+            if ((load.datetime[i].hour < 6)):# or ((load.datetime[i].hour>10) and load.datetime[i].hour<14)):
+                battpower = bat.power_request(i,LSimbalance - demand_target)
+
+            #if load.datetime[i].hour > 6:
+            else:
+                if LSimbalance > demand_target:
                     battpower = bat.power_request(i,LSimbalance - demand_target)
-                gpower = grid.power_request(i,LSimbalance - battpower)
+                else:
+                    battpower = bat.power_request(i,0)
+            gpower = grid.power_request(i,LSimbalance - battpower)
 
         # peak shaving with charging batt from grid
         elif peak_shaving and grid_charging:
@@ -1682,6 +1686,7 @@ def simulate_utility_on(t_0,L):
 
     # print some helpful debug stats
     if debug_energy:
+        print('** debug energy **')
         sum_batdis = np.sum(np.clip(bat.P_kw_nf,0,10000))/4
         sum_batchg = np.sum(-1*np.clip(bat.P_kw_nf,-10000,0))/4
 
@@ -1720,7 +1725,7 @@ def simulate_utility_on(t_0,L):
         print('period peak demand [kW]: {:.1f}'.format(peak_demand))
         print('period peak demand time: {}'.format(load.datetime[peak_demand_index]))
         print('period peak demand index [tstep]: {:d}'.format(peak_demand_index))
-        print('\ndemand targets [kW]: \n{}'.format(demand_targets.monthly))
+
 
         prev_month = 1
         demand_ratchet = [0] * demand_targets.tou_levels
@@ -1740,13 +1745,19 @@ def simulate_utility_on(t_0,L):
 
 
         results.demands = np.asarray(demands)
-        #np.set_printoptions(precision=1,suppress=True)
-        print('\ndemands [kW]:\n{}'.format(results.demands))
-        print('\ndemand errors [kW]:\n{}'.format(results.demands - demand_targets.monthly))
+        results.errors = results.demands - demand_targets.monthly
+
+        for j in range(demand_targets.monthly.shape[1]):
+            print('\ntou',j,'\nTargets     Demands    Errors (pos bad)')
+            for i in range(demand_targets.monthly.shape[0]):
+                v1 = demand_targets.monthly[i][j]
+                v2 = results.demands[i][j]
+                v3 = results.errors[i][j]
+                print('{:.1f}       {:.1f}      {:.1f}'.format(v1,v2,v3))
 
     # print checksum
     if debug:
-        print('\nchecksum: {:.3f}'.format(np.sum(bat.P_kw_nf)))
+        print('\ndebug checksum: {:.3f}'.format(np.sum(bat.P_kw_nf)))
 
 #
 # Simulate entech (utility on)
@@ -1946,6 +1957,7 @@ def simulate_entech(m_0,L):
 
     # print some helpful debug stats
     if debug_energy:
+        print('** debug energy **')
         sum_batdis = np.sum(np.clip(bat.P_kw_nf,0,10000))/4
         sum_batchg = np.sum(-1*np.clip(bat.P_kw_nf,-10000,0))/4
 
@@ -2060,6 +2072,7 @@ peak_shaving = 0
 grid_online = 0
 grid_charging = 0
 charging_period = False
+batt_eff = 0.95
 entech = 0
 PS_arb_thresh = 0.4
 demand_target = 0
@@ -2126,6 +2139,9 @@ if len(sys.argv) > 1:
 
         elif sys.argv[i] == '-cp':
             charging_period = True
+
+        elif sys.argv[i] == '-bef':
+            batt_eff = float(sys.argv[i+1])
 
         elif sys.argv[i] == '-gp':
             gen_power = float(sys.argv[i+1])
@@ -2479,6 +2495,7 @@ for load_scaling_factor in load_scale_vector:
                     avg_ttff.append(np.average(ttff))
 
                     if debug_res:
+                        print('** debug res **')
                         print('TTFF [h]: max={} avg={} min={}'.format(max_ttff,avg_ttff,min_ttff))
                         print('Confidence: 72h={} 336h={} {}h={}'.format(conf_72h,conf_336h,Xh,conf_Xh))
 
