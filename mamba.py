@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "6.19"
+__version__ = "6.19.1"
 
 #
 # Versions
 #
 
+#   6.19.1 - bat class empty() full() use soc_prev
 #   6.19 - support new dirs: Dropbox/Development and Dropbox/Tools
 #   6.18 - pv, load, and soc profiles from a new file format and location, user-defined confidence duration and "vary soc0" flag, meta in resilience/vector csv's
 #   6.17.1 - quick branch: report 144h confidence (overall and just apr-nov), change some file outputs
@@ -326,13 +327,13 @@ class BattClass:
         return -1*(1 - me.soc_prev) * me.En_kwh * (3600.0/me.timestep) * me.eff_chg
 
     def empty(me,i):
-        return (me.soc_nf[i] < 0.001)
+        return (me.soc_prev < 0.001)
 
     def full(me,i):
-        return (me.soc_nf[i] > 0.999)
+        return (me.soc_prev > 0.999)
 
     def over_half(me,i):
-        return (me.soc_nf[i] > 0.5)
+        return (me.soc_prev > 0.5)
 
     def set_soc0(me,soc):
         me.soc0 = soc
