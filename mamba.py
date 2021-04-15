@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "6.19.2"
+__version__ = "6.19.3"
 
 #
 # Versions
 #
 
+#   6.19.3 - different generator parameters, battery daytime charging from gen is configurable
 #   6.19.2 - multigen dispatch (without bug from 6.20), warmup fixed, check python version
 #   6.19.1 - bat class empty() full() use soc_prev
 #   6.19 - support new dirs: Dropbox/Development and Dropbox/Tools
@@ -161,9 +162,9 @@ class GenClass:
         if (p_req > 0) & me.cool_down_complete():
             p_final = min(p_req,  me.Pn_kw, me.Pmax_tank())
         elif (p_req == 0) & me.warm_up_complete():
-            p_final = 0.
+            p_final = 0
         elif (p_req < 0):
-            p_final = 0.
+            p_final = 0
         else:
             p_final = me.prev_power
         me.on_off_counter(p_final)
@@ -177,9 +178,9 @@ class GenClass:
         if (p_req > 0) & me.cool_down_complete():
             p_final = min(p_req,  me.Pn_kw, me.Pmax_tank())
         elif (p_req == 0) & me.warm_up_complete():
-            p_final = 0.
+            p_final = 0
         elif (p_req < 0):
-            p_final = 0.
+            p_final = 0
         else:
             p_final = me.prev_power
         return p_final
@@ -190,6 +191,9 @@ class GenClass:
             power = (fuel_remaining*me.dpph - me.fuelcurve_Bcoeff)*me.fuelcurve_Ainv
         else:
             power = 0
+        if power < 0: # fun fact, the power calc can come out negative 
+            power = 0
+            err.fuel_curve_calc()
         return power
 
     def fuel_calc(me, i, power):
@@ -293,6 +297,7 @@ class BattClass:
         me.soc_flag = 0                             # binary
         me.eff_chg = 0.95
         me.eff_dischg = 0.95
+        me.daytime_gen_chg = batt_daytime_gen_chg
 
     def clear(me):
         me.soc_prev = me.soc0
@@ -366,6 +371,12 @@ class BattClass:
     def set_soc0(me,soc):
         me.soc0 = soc
         me.soc_prev = soc
+
+    def avoid_daytime_gen_chg(me,i,i_pv):
+        if me.daytime_gen_chg:
+            return False
+        else:
+            return me.over_half(i) and (pv.P_kw_nf[i_pv] > 0)
 
 #
 # PV Class
@@ -489,6 +500,7 @@ class FaultClass:
         me.energybalance = 0
         me.index = 0
         me.fuelCurveCoeffs = 0
+        me.fuelCurveCalc = 0
         me.dispatch = 0
 
     def print_faults(me):
@@ -509,6 +521,9 @@ class FaultClass:
         if err.dispatch:
             print('')
             print('\033[1;31;1m error with dispatch (qty {:d})'.format(err.dispatch))
+        if err.fuelCurveCalc:
+            print('')
+            print('\033[1;31;1m error with fuel curve calculation (qty {:d})'.format(err.fuelCurveCalc))
 
     def main_loop(me):
         me.mainloop += 1
@@ -525,6 +540,9 @@ class FaultClass:
     def dispatch(me):
         me.dispatch += 1
 
+    def fuel_curve_calc(me):
+        me.fuelCurveCalc += 1
+
 
 ################################################################################
 #
@@ -540,31 +558,36 @@ def help_printout():
     print('\nmamba.py\nmuGrid Analytics LLC\nMichael Wood\nmichael.wood@mugrid.com')
     print('')
     print('Arguments are best issued in this order, with the values following directly after keys')
-    print('e.g. % python mamba.py -s fish -bp 20 be 40 .. (etc)')
+    print('e.g. % python mamba.py -s mugrid_test -bp 1.5 -be 3 .. (etc)')
     print('')
     print('Typical Command Line Arguments')
-    print(' Simulation type:        -sim [r=res | ua = utility arbitrage | up = utility peak shaving]    e.g. -sim r')
-    print(' Site name:              -s  [sitename]              e.g. -s hradult')
+    print(' Simulation type:        -sim [simulation type]      e.g. -sim r')
+    print(' Site name:              -s  [sitename]              e.g. -s mugrid_test')
     print(' Battery power:          -bp [power kW]              e.g. -bp 60')
     print(' Battery energy:         -be [energy kWh]            e.g. -be 120')
     print(' Generator power:        -gp [power kW]              e.g. -gp 60')
     print(' Generator tank:         -gt [size gal]              e.g. -gt 200')
     print('')
-    print('Optional Command Line Arguments')
-    print(' Run "n" simulations:    -r [n]                      e.g. -r 1   default=2920')
-    print(' Dispatch vectors ON:    -v                          e.g. -v     default=OFF')
-    print(' Battery vector ON:      -vb                         e.g. -vb    default=OFF')
-    print(' Load stats ON:          --loadstats                 e.g. --loadstats     default=OFF')
-    print(' Skip ahead "h" hours:   -sk [h]                     e.g. -sk 24 default=OFF')
-    print(' Superloop enable:       -sl                         e.g. -sl    default=OFF')
-    print(' Gen fuel is propane:    -gfp                        e.g. -gfp   default=OFF')
-    print(' Days to simulate:       --days [days]               e.g. --days 3')
-    print('     --days must come after --sim because it re-modifies some variables')
-    print(' Battery depth of dischg:-bd [dod]                   e.g. -bd 0.95')
+    print('Optional Command Line Arguments (must come after -sim)')
+    print(' Simulation resilience multiple generators')
+    print('                         -sim rmg [gen1 power, gen1 tank, gen2 power, gen2 tank]')
+    print('                                                     e.g. -sim rmg 20 100 50 200')
+    print(' Run "n" simulations:    -r [n]                      e.g. -r 1           default=2920')
+    print(' Dispatch vectors ON:    -v                          e.g. -v             default=OFF')
+    print(' Battery vector ON:      -vb                         e.g. -vb            default=OFF')
+    print(' Load stats ON:          --loadstats                 e.g. --loadstats    default=OFF')
+    print(' Skip ahead "h" hours:   -sk [h]                     e.g. -sk 24         default=OFF')
+    print(' Superloop enable:       -sl                         e.g. -sl            default=OFF')
+    print(' Enable battery daytime generator charging ')
+    print('                         -bdg                        e.g. -bdg           default=OFF')
+    print(' Gen fuel is propane:    -gfp                        e.g. -gfp           default=OFF')
+    print(' Days to simulate:       --days [days]               e.g. --days 3       default=365')
+    print(' Battery depth of dischg:-bd [dod]                   e.g. -bd 0.95       default=1.0')
     print('     -bd must come after -be because it modifies battery energy')
-    print('     careful: -bd just changes the battery energy, so soc will still be 0-100%')
-    print(' Plots ON (option to plot normal or utility first):    --plots [ | u]                     e.g. --plots     default=OFF')
-    print('Debug (see code):        --debug [arg]               e.g. --debug demand')
+    print('     NB: -bd just changes the battery energy, so soc will still be 0-100%')
+    print(' Plots ON (option to plot normal or utility first):')
+    print('                         --plots [ | u]              e.g. --plots        default=OFF')
+    print('Debug (see code):        --debug [ | type]           e.g. --debug res    default=OFF')
     print('')
 
 #
@@ -1170,7 +1193,8 @@ def simulate_resilience_multigen(t_0,L):
 
         if not (gen1.tank_empty() and gen2.tank_empty()):
 
-            if bat.full(i) or (LSimbalance<0) or (bat.over_half(i) and (pv.P_kw_nf[i_pv] > 0)):
+            #if bat.full(i) or (LSimbalance<0) or (bat.over_half(i) and (pv.P_kw_nf[i_pv] > 0)):
+            if bat.full(i) or (LSimbalance<0) or bat.avoid_daytime_gen_chg(i,i_pv):
                 chg = 0
             elif bat.empty(i):
                 chg = 1
@@ -1180,6 +1204,11 @@ def simulate_resilience_multigen(t_0,L):
                 LSBimbalance =  LSimbalance - battpower
                 gen1power = gen1.power_check(i,LSBimbalance)
                 gen2power = gen2.power_check(i,LSBimbalance - gen1power)
+
+                if debug and gen1power<0:
+                    print('i{}   ls:{:.1f}   b:{:.1f}   g1:{:.1f}   g2:{:.1f}'
+                        .format(i,LSimbalance,battpower,gen1power,gen2power))
+                    quit()
 
             elif chg == 1:
                 LSGimbalance = LSimbalance - gen1.Pn_kw
@@ -1195,6 +1224,8 @@ def simulate_resilience_multigen(t_0,L):
                     LSBimbalance = LSimbalance - battpower
                     gen1power = gen1.power_check(i,LSBimbalance)
                     gen2power = gen2.power_check(i,LSBimbalance - gen1power)
+                    battpower = bat.power_check(i,LSimbalance - gen1power - gen2power)
+
 
         else: # tanks empty
             chg = 0
@@ -1226,6 +1257,10 @@ def simulate_resilience_multigen(t_0,L):
                          gen1.P_kw_nf[i] - gen2.P_kw_nf[i] -
                          grid.P_kw_nf.item(i)) )  > 0.001:
             err.energy_balance()
+
+        if debug and (i>60) and (i<80):
+            print('i{}   ls:{:.1f}   b:{:.1f}   g1:{:.1f}   g2:{:.1f}'
+                .format(i,LSimbalance,battpower,gen1power,gen2power))
 
     time_to_grid_import = microgrid.time_to_failure/(3600./load.timestep)
 
@@ -1795,6 +1830,56 @@ def simulate_entech(m_0,L):
 
     return demand_target_1, demand_target_2, demand_target_3
 
+#
+# output resilience dispatch and metadata to csv
+#
+def output_resilience_results(sim):
+    if superloop_enabled:
+          filename = output_dir + '/resilience_{}_l{:.2f}_pv{:.2f}_b{:.0f}-{:.1f}h.csv'.format(filename_param,load_scaling_factor, pv_scaling_factor, batt_power, batt_hrs)
+    else:
+        filename = output_dir + '/resilience_{}.csv'.format(filename_param)
+    with open(filename, 'w') as file:
+        output = csv.writer(file)
+        output.writerow(['Site',site])
+        output.writerow(['mamba.py ver',__version__])
+        output.writerow(['Load profile ver',load_all.version])
+        output.writerow(['Solar profile ver',pv_all.version])
+        output.writerow(['Datetime',dt.datetime.now()])
+        output.writerow(['Simulated outage duration [days]',days])
+        output.writerow(['Outages simulated',runs])
+        output.writerow(['Program call and args',' '.join(sys.argv)])
+        output.writerow([])
+        output.writerow(['PV scaling factor', pv_scaling_factor])
+        output.writerow(['Battery power [kW]',batt_power])
+        output.writerow(['Battery energy [kWh]',batt_energy])
+        output.writerow(['Battery hours [kWh]',batt_hrs])
+        output.writerow(['Pull soc0 from previous dispatch?',vary_soc0])
+        if sim == 'rmg':
+            output.writerow(['Generator 1 power [kW]',gen1_power])
+            output.writerow(['Generator 1 tank [gal]',gen1_tank])
+            output.writerow(['Generator 1 fuel curve A coefficient [gal/h/kW]',gen1_fuelA])
+            output.writerow(['Generator 1 fuel curve B coefficient [gal/h]',gen1_fuelB])
+            output.writerow(['Generator 2 power [kW]',gen2_power])
+            output.writerow(['Generator 2 tank [gal]',gen2_tank])
+            output.writerow(['Generator 2 fuel curve A coefficient [gal/h/kW]',gen2_fuelA])
+            output.writerow(['Generator 2 fuel curve B coefficient [gal/h]',gen2_fuelB])
+        else:
+            output.writerow(['Generator power [kW]',gen_power])
+            output.writerow(['Generator tank [gal]',gen_tank])
+            output.writerow(['Fuel curve A coefficient [gal/h/kW]',gen_fuelA])
+            output.writerow(['Fuel curve B coefficient [gal/h]',gen_fuelB])
+        output.writerow([])
+        output.writerow(['Confidence 72 h',conf_72h])
+        output.writerow(['Confidence 336 h',conf_336h])
+        output.writerow(['Confidence {} h'.format(Xh),conf_Xh])
+        output.writerow(['Max TTFF [h]', max_ttff])
+        output.writerow(['Avg TTFF [h]', avg_ttff])
+        output.writerow(['Min TTFF [h]', min_ttff])
+        output.writerow([])
+        output.writerow(['Outage','Outage Start', 'Time to First Failure [h]', 'Cumulative Operating Time [h]'])
+        for i in range(runs):
+            output.writerow([i+1,results.datetime[i],results.time_to_grid_import_h_nf[i],results.onlineTime_h_ni[i]])
+
 
 
 ################################################################################
@@ -1832,6 +1917,7 @@ hard_code_superloop = 0
 peak_shaving = 0
 grid_online = 0
 grid_charging = 0
+batt_daytime_gen_chg = False
 entech = 0
 PS_arb_thresh = 0.4
 demand_target = 0
@@ -1847,8 +1933,11 @@ batt_hrs = 0.           # kWh/kW
 batt_energy = 0.       # kwh
 dod = 1.                 # depth of discharge
 gen_power = 0.           # kw
+gen1_power, gen2_power = 0., 0. #kw
 gen_tank = 0.          # gal
+gen1_tank, gen2_tank = 0., 0. # gal
 gen_fuel_propane = 0    # 1 = propane, 0 = diesel
+gen1_fuel_propane, gen2_fuel_propane = 0, 0
 calc_energy_from_hrs = 0  # batt power such that capacity = 1h
 
 # outputs on/off
@@ -1895,6 +1984,9 @@ if len(sys.argv) > 1:
             dod = float(sys.argv[i+1])
             batt_energy = batt_energy * dod
 
+        elif sys.argv[i] == '-bdg':
+            batt_daytime_gen_chg = True
+
         elif sys.argv[i] == '-gp':
             gen_power = float(sys.argv[i+1])
 
@@ -1908,13 +2000,19 @@ if len(sys.argv) > 1:
                 L = days*24*4                     # length of simulation in timesteps
                 output_resilience = 1
 
-            if sim == 'rmg':
+            elif sim == 'rmg':
+                gen1_power = float(sys.argv[i+2])
+                gen1_tank = float(sys.argv[i+3])
+                gen2_power = float(sys.argv[i+4])
+                gen2_tank = float(sys.argv[i+5])
                 grid_online = 0
                 simulation_interval = 3
                 runs = 365*24//simulation_interval   # number of iterations
                 days = 14                          # length of grid outage
                 L = days*24*4                     # length of simulation in timesteps
                 output_resilience = 1
+
+
 
             elif sim == 'ua':
                 grid_online = 1
@@ -2076,9 +2174,9 @@ else:
 #
 
 if superloop_enabled and hard_code_superloop:
-    pv_scale_vector = [1, 1.25, 1.5, 1.75, 2.0]
+    pv_scale_vector = [0.5, 1., 1.5]
     load_scale_vector = [1]
-    batt_power_vector = [30,60,90]
+    batt_power_vector = [0.5, 0.75, 1.0]
     batt_hrs_vector = [1]
     gen_power_vector = [0]
 elif superloop_enabled:
@@ -2118,6 +2216,9 @@ for load_scaling_factor in load_scale_vector:
             for batt_hrs in batt_hrs_vector:
                 for gen_power in gen_power_vector:
                     [gen_fuelA, gen_fuelB] = lookup_fuel_curve_coeffs(gen_power, gen_fuel_propane)
+                    if sim == 'rmg':
+                        (gen1_fuelA, gen1_fuelB) = lookup_fuel_curve_coeffs(gen1_power, gen1_fuel_propane)
+                        (gen2_fuelA, gen2_fuelB) = lookup_fuel_curve_coeffs(gen2_power, gen2_fuel_propane)
 
                     if calc_energy_from_hrs:
                         batt_energy = batt_power * batt_hrs
@@ -2195,12 +2296,12 @@ for load_scaling_factor in load_scale_vector:
                         bat =   BattClass(  batt_power,batt_energy,1,15*60.,L)      # kW, kWh, soc0 tstep[s]
                         grid =  GridClass(  1000.,L)                    # kW
                         if sim == 'ue':
-                            grid1 =  GridClass(  1000.,L)                    # kW
-                            grid2 =  GridClass(  1000.,L)                    # kW
-                            grid3 =  GridClass(  1000.,L)                    # kW
+                            grid1 =  GridClass(1000.,L)                    # kW
+                            grid2 =  GridClass(1000.,L)                    # kW
+                            grid3 =  GridClass(1000.,L)                    # kW
                         if sim == 'rmg':
-                            gen1 =   GenClass(   gen_power,gen_fuelA,gen_fuelB,gen_tank,15.*60.,L)   # kW, fuel A, fuel B, tank[gal], tstep[s]
-                            gen2 =   GenClass(   gen_power,gen_fuelA,gen_fuelB,gen_tank,15.*60.,L)   # kW, fuel A, fuel B, tank[gal], tstep[s]
+                            gen1 =   GenClass(gen1_power,gen1_fuelA,gen1_fuelB,gen1_tank,15.*60.,L)   # kW, fuel A, fuel B, tank[gal], tstep[s]
+                            gen2 =   GenClass(gen2_power,gen2_fuelA,gen2_fuelB,gen2_tank,15.*60.,L)   # kW, fuel A, fuel B, tank[gal], tstep[s]
 
                         microgrid = MicrogridClass()
 
@@ -2249,46 +2350,7 @@ for load_scaling_factor in load_scale_vector:
                         print('TTFF [h]: max={} avg={} min={}'.format(max_ttff,avg_ttff,min_ttff))
                         print('Confidence: 72h={} 336h={} {}h={}'.format(conf_72h,conf_336h,Xh,conf_Xh))
 
-                    if output_resilience:
-                        if superloop_enabled:
-                              filename = output_dir + '/resilience_{:.1f}_{:.3f}_{:.0f}_{:.1f}_{:.0f}.csv'.format(load_scaling_factor, pv_scaling_factor, batt_power, batt_hrs, gen_power)
-                        else:
-                            filename = output_dir + '/resilience_{}.csv'.format(filename_param)
-                        with open(filename, 'w') as file:
-                            output = csv.writer(file)
-                            output.writerow(['Site',site])
-                            output.writerow(['mamba.py ver',__version__])
-                            output.writerow(['Load profile ver',load_all.version])
-                            output.writerow(['Solar profile ver',pv_all.version])
-                            output.writerow(['Datetime',dt.datetime.now()])
-                            output.writerow(['Simulated outage duration [days]',days])
-                            output.writerow(['Outages simulated',runs])
-                            output.writerow(['Program call and args',' '.join(sys.argv)])
-                            output.writerow([])
-                            output.writerow(['PV scaling factor', pv_scaling_factor])
-                            output.writerow(['Battery power [kW]',batt_power])
-                            output.writerow(['Battery energy [kWh]',batt_energy])
-                            output.writerow(['Battery hours [kWh]',batt_hrs])
-                            output.writerow(['Generator power [kW]',gen_power])
-                            output.writerow(['Generator tank [gal]',gen_tank])
-                            output.writerow(['Fuel curve A coefficient [gal/h/kW]',gen_fuelA])
-                            output.writerow(['Fuel curve B coefficient [gal/h]',gen_fuelB])
-                            output.writerow(['Pull soc0 from previous dispatch?',vary_soc0])
-                            output.writerow([])
-                            output.writerow(['Confidence 72 h',conf_72h])
-                            output.writerow(['Confidence 336 h',conf_336h])
-                            output.writerow(['Confidence {} h'.format(Xh),conf_Xh])
-                            output.writerow(['Max TTFF [h]', max_ttff])
-                            output.writerow(['Avg TTFF [h]', avg_ttff])
-                            output.writerow(['Min TTFF [h]', min_ttff])
-                            output.writerow([])
-                            output.writerow(['Outage','Outage Start', 'Time to First Failure [h]', 'Cumulative Operating Time [h]'])
-                            for i in range(runs):
-                                output.writerow([i+1,results.datetime[i],results.time_to_grid_import_h_nf[i],results.onlineTime_h_ni[i]])
-
-
-
-
+                    if output_resilience: output_resilience_results(sim)
 
 
 t_script_finished_dt = dt.datetime.now()
