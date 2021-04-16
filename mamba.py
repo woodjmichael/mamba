@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "6.19.3"
+__version__ = "6.19.4"
 
 #
 # Versions
 #
 
+#   6.19.4 - bug in sim_res() where battpower was wrong when tank nearly empty
 #   6.19.3 - different generator parameters, battery daytime charging from gen is configurable
 #   6.19.2 - multigen dispatch (without bug from 6.20), warmup fixed, check python version
 #   6.19.1 - bat class empty() full() use soc_prev
@@ -191,7 +192,7 @@ class GenClass:
             power = (fuel_remaining*me.dpph - me.fuelcurve_Bcoeff)*me.fuelcurve_Ainv
         else:
             power = 0
-        if power < 0: # fun fact, the power calc can come out negative 
+        if power < 0: # fun fact, the power calc can come out negative
             power = 0
             err.fuel_curve_calc()
         return power
@@ -484,8 +485,7 @@ class DemandTargetsClass:
         tou_level_now = me.get_tou_level(i)
 
         if debug_demand:
-            if i<=95:
-                print('{} {} tou_res {} tou_level_now {} demand_target {}'.format(i,load.datetime[i],me.tou_res_minutes,tou_level_now,me.monthly[month-1,tou_level_now]))
+            print('{} {} tou_res {} tou_level_now {} demand_target {}'.format(i,load.datetime[i],me.tou_res_minutes,tou_level_now,me.monthly[month-1,tou_level_now]))
 
         return me.monthly[month-1,tou_level_now]
 
@@ -1017,27 +1017,26 @@ def simulate_resilience(t_0,L):
 
         if not gen.tank_empty():
 
-            if bat.empty(i):
-                chg = 1
-            elif bat.full(i) or (bat.over_half(i) and (pv.P_kw_nf[i_pv] > 0)):
+            if bat.full(i) or (LSimbalance<0) or bat.avoid_daytime_gen_chg(i,i_pv):
                 chg = 0
+            elif bat.empty(i):
+                chg = 1
 
             if chg == 0:
-                battpower = bat.power_request(i,LSimbalance)
-                LSBimbalance =  LSimbalance - battpower       # load-solar-batt imbalance
-                genpower = gen.power_request(i,LSBimbalance)
+                battpower = bat.power_check(i,LSimbalance)
+                genpower = gen.power_check(i,LSimbalance - battpower)
 
             elif chg == 1:
-                LSGimbalance = LSimbalance - gen.Pn_kw
-                battpower = bat.power_request(i,LSGimbalance)
-                LSBimbalance = LSimbalance - battpower
-                genpower = gen.power_request(i,LSBimbalance)
+                battpower = bat.power_check(i,LSimbalance - gen.power_check(i,gen.Pn_kw))
+                genpower = gen.power_check(i,LSimbalance - battpower)
 
         elif gen.tank_empty():
             chg = 0
-            battpower = bat.power_request(i,LSimbalance)
-            LSBimbalance = LSimbalance - battpower
-            genpower = gen.power_request(i,0)
+            battpower = bat.power_check(i,LSimbalance)
+            genpower = gen.power_check(i,0)
+
+        bat.power_request(i,battpower)
+        gen.power_request(i,genpower)
 
         LSBGimbalance = LSimbalance - battpower  -   genpower        # load-solar-batt-gen imbalance
 
@@ -1193,41 +1192,36 @@ def simulate_resilience_multigen(t_0,L):
 
         if not (gen1.tank_empty() and gen2.tank_empty()):
 
-            #if bat.full(i) or (LSimbalance<0) or (bat.over_half(i) and (pv.P_kw_nf[i_pv] > 0)):
             if bat.full(i) or (LSimbalance<0) or bat.avoid_daytime_gen_chg(i,i_pv):
                 chg = 0
             elif bat.empty(i):
                 chg = 1
 
+            # old + power check
             if chg == 0:
                 battpower = bat.power_check(i,LSimbalance)
                 LSBimbalance =  LSimbalance - battpower
                 gen1power = gen1.power_check(i,LSBimbalance)
                 gen2power = gen2.power_check(i,LSBimbalance - gen1power)
 
-                if debug and gen1power<0:
-                    print('i{}   ls:{:.1f}   b:{:.1f}   g1:{:.1f}   g2:{:.1f}'
-                        .format(i,LSimbalance,battpower,gen1power,gen2power))
-                    quit()
-
             elif chg == 1:
-                LSGimbalance = LSimbalance - gen1.Pn_kw
+                LSGimbalance = LSimbalance - gen1.power_check(i,gen1.Pn_kw)
                 battpower = bat.power_check(i,LSGimbalance)
                 LSBimbalance = LSimbalance - battpower
                 gen1power = gen1.power_check(i,LSBimbalance)
                 gen2power = gen2.power_check(i,0)
-                battpower = bat.power_check(i,LSimbalance - gen1power - gen2power)
+                #battpower = bat.power_check(i,LSimbalance - gen1power - gen2power)
 
                 if not isclose(LSBimbalance,gen1power):
-                    LSGimbalance = LSimbalance - gen1.Pn_kw - gen2.Pn_kw
+                    LSGimbalance = LSimbalance - gen1.power_check(i,gen1.Pn_kw) - gen2.power_check(i,gen2.Pn_kw)
                     battpower = bat.power_check(i,LSGimbalance)
                     LSBimbalance = LSimbalance - battpower
                     gen1power = gen1.power_check(i,LSBimbalance)
                     gen2power = gen2.power_check(i,LSBimbalance - gen1power)
-                    battpower = bat.power_check(i,LSimbalance - gen1power - gen2power)
+                    #battpower = bat.power_check(i,LSimbalance - gen1power - gen2power)
 
-
-        else: # tanks empty
+        # tanks empty
+        else:
             chg = 0
             battpower = bat.power_check(i,LSimbalance)
             LSBimbalance = LSimbalance - battpower
@@ -1257,10 +1251,6 @@ def simulate_resilience_multigen(t_0,L):
                          gen1.P_kw_nf[i] - gen2.P_kw_nf[i] -
                          grid.P_kw_nf.item(i)) )  > 0.001:
             err.energy_balance()
-
-        if debug and (i>60) and (i<80):
-            print('i{}   ls:{:.1f}   b:{:.1f}   g1:{:.1f}   g2:{:.1f}'
-                .format(i,LSimbalance,battpower,gen1power,gen2power))
 
     time_to_grid_import = microgrid.time_to_failure/(3600./load.timestep)
 
@@ -1984,11 +1974,20 @@ if len(sys.argv) > 1:
             dod = float(sys.argv[i+1])
             batt_energy = batt_energy * dod
 
+        elif sys.argv[i] == '-vs':
+            vary_soc0 = True
+
         elif sys.argv[i] == '-bdg':
             batt_daytime_gen_chg = True
 
         elif sys.argv[i] == '-gp':
             gen_power = float(sys.argv[i+1])
+
+        elif sys.argv[i] == '-gt':
+            gen_tank = float(sys.argv[i+1])
+
+        elif sys.argv[i] == '-gfp':
+            gen_fuel_propane = 1
 
         elif sys.argv[i] == '-sim':
             sim = str(sys.argv[i+1])
@@ -2011,8 +2010,6 @@ if len(sys.argv) > 1:
                 days = 14                          # length of grid outage
                 L = days*24*4                     # length of simulation in timesteps
                 output_resilience = 1
-
-
 
             elif sim == 'ua':
                 grid_online = 1
@@ -2054,14 +2051,8 @@ if len(sys.argv) > 1:
         elif sys.argv[i] == '-c': # length of time for confidence interval calc
             Xh = int(sys.argv[i+1])
 
-        elif sys.argv[i] == '-vs':
-            vary_soc0 = True
-
         elif sys.argv[i] == '-psat':
             PS_arb_thresh = float(sys.argv[i+1])
-
-        elif sys.argv[i] == '-gt':
-            gen_tank = float(sys.argv[i+1])
 
         elif sys.argv[i] == '-v':
             output_vectors = 1
@@ -2133,9 +2124,6 @@ if len(sys.argv) > 1:
             calc_energy_from_hrs = 1
             strs = sys.argv[i+1:j]
             batt_hrs_vector = [int(i) for i in strs]
-
-        elif sys.argv[i] == '-gfp':
-            gen_fuel_propane = 1
 
         elif sys.argv[i] == '-sv':
             filename_param = str(sys.argv[i+1])
