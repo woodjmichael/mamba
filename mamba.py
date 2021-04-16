@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "6.19.4"
+__version__ = "6.19.5"
 
 #
 # Versions
 #
 
+#   6.19.5 - resilience_.csv only one empty row (before data), load scaling added to superloop program arguments
 #   6.19.4 - bug in sim_res() where battpower was wrong when tank nearly empty
 #   6.19.3 - different generator parameters, battery daytime charging from gen is configurable
 #   6.19.2 - multigen dispatch (without bug from 6.20), warmup fixed, check python version
@@ -1838,7 +1839,6 @@ def output_resilience_results(sim):
         output.writerow(['Simulated outage duration [days]',days])
         output.writerow(['Outages simulated',runs])
         output.writerow(['Program call and args',' '.join(sys.argv)])
-        output.writerow([])
         output.writerow(['PV scaling factor', pv_scaling_factor])
         output.writerow(['Battery power [kW]',batt_power])
         output.writerow(['Battery energy [kWh]',batt_energy])
@@ -1858,7 +1858,6 @@ def output_resilience_results(sim):
             output.writerow(['Generator tank [gal]',gen_tank])
             output.writerow(['Fuel curve A coefficient [gal/h/kW]',gen_fuelA])
             output.writerow(['Fuel curve B coefficient [gal/h]',gen_fuelB])
-        output.writerow([])
         output.writerow(['Confidence 72 h',conf_72h])
         output.writerow(['Confidence 336 h',conf_336h])
         output.writerow(['Confidence {} h'.format(Xh),conf_Xh])
@@ -2112,6 +2111,12 @@ if len(sys.argv) > 1:
             strs = sys.argv[i+1:j]
             pv_scale_vector = [float(i) for i in strs]
 
+        elif sys.argv[i] == '-slls':
+            j = i + 5 + 1               # expect 5 more args
+            superloop_enabled = 1
+            strs = sys.argv[i+1:j]
+            load_scale_vector = [float(i) for i in strs]
+
         elif sys.argv[i] == '-slbp':
             j = i + 2 + 1               # expect 2 more args
             superloop_enabled = 1
@@ -2170,7 +2175,7 @@ if superloop_enabled and hard_code_superloop:
 elif superloop_enabled:
     #pv_scale_vector = [pv_scaling_factor]
     #batt_energy_vector = [batt_energy]
-    load_scale_vector = [load_scaling_factor]
+    #load_scale_vector = [load_scaling_factor]
     #batt_power_vector = [batt_power]
     #batt_hrs_vector = [batt_hrs]
     gen_power_vector = [gen_power]
