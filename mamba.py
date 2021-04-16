@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "6.19.5"
+__version__ = "6.19.6"
 
 #
 # Versions
 #
 
+#   6.19.6 - csv meta data formatted as comments, no empty rows
 #   6.19.5 - resilience_.csv only one empty row (before data), load scaling added to superloop program arguments
 #   6.19.4 - bug in sim_res() where battpower was wrong when tank nearly empty
 #   6.19.3 - different generator parameters, battery daytime charging from gen is configurable
@@ -1060,43 +1061,7 @@ def simulate_resilience(t_0,L):
     time_to_grid_import = microgrid.time_to_failure/(3600./load.timestep)
 
     # vectors
-    if output_vectors:
-        filename = output_dir + '/vectors_{}.csv'.format(filename_param)
-        with open(filename, 'w') as file:
-            output = csv.writer(file)
-            output.writerow(['Site',site])
-            output.writerow(['mamba.py ver',__version__])
-            output.writerow(['Load profile ver',load_all.version])
-            output.writerow(['Solar profile ver',pv_all.version])
-            output.writerow(['Datetime',dt.datetime.now()])
-            output.writerow(['Simulated outage duration [days]',days])
-            output.writerow(['Outages simulated',runs])
-            output.writerow(['Program call and args',' '.join(sys.argv)])
-            output.writerow([])
-            output.writerow(['PV scaling factor', pv_scaling_factor])
-            output.writerow(['Battery power [kW]',batt_power])
-            output.writerow(['Battery energy [kWh]',batt_energy])
-            output.writerow(['Battery hours [kWh]',batt_hrs])
-            output.writerow(['Generator power [kW]',gen_power])
-            output.writerow(['Generator tank [gal]',gen_tank])
-            output.writerow(['Fuel curve A coefficient [gal/h/kW]',gen_fuelA])
-            output.writerow(['Fuel curve B coefficient [gal/h]',gen_fuelB])
-            output.writerow(['Pull soc0 from previous dispatch?',vary_soc0])
-            output.writerow([])
-            output.writerow(['datetime','load kW','pv kW','batt kw','batt soc','gen kW','fuel gal','grid kW'])
-            for i in range(L):
-                if solar_data_inverval_15min:
-                    i_pv = i
-                else:
-                    i_pv = i//4 # only increment i_pv every 4 i-increments
-                l=load.P_kw_nf.item(i)
-                p=pv.P_kw_nf.item(i_pv)
-                b=bat.P_kw_nf.item(i)
-                s=bat.soc_nf.item(i)
-                g=gen.P_kw_nf.item(i)
-                f=gen.fuelConsumed_gal_nf.item(i)
-                G=grid.P_kw_nf.item(i)
-                output.writerow([load.datetime[i],l,p,b,s,g,f,G])
+    if output_vectors: output_dispatch_vectors(sim)
 
     return time_to_grid_import
 
@@ -1256,45 +1221,7 @@ def simulate_resilience_multigen(t_0,L):
     time_to_grid_import = microgrid.time_to_failure/(3600./load.timestep)
 
     # vectors
-    if output_vectors:
-        filename = output_dir + '/vectors_{}.csv'.format(filename_param)
-        with open(filename, 'w') as file:
-            output = csv.writer(file)
-            output.writerow(['Site',site])
-            output.writerow(['mamba.py ver',__version__])
-            output.writerow(['Load profile ver',load_all.version])
-            output.writerow(['Solar profile ver',pv_all.version])
-            output.writerow(['Datetime',dt.datetime.now()])
-            output.writerow(['Simulated outage duration [days]',days])
-            output.writerow(['Outages simulated',runs])
-            output.writerow(['Program call and args',' '.join(sys.argv)])
-            output.writerow([])
-            output.writerow(['PV scaling factor', pv_scaling_factor])
-            output.writerow(['Battery power [kW]',batt_power])
-            output.writerow(['Battery energy [kWh]',batt_energy])
-            output.writerow(['Battery hours [kWh]',batt_hrs])
-            output.writerow(['Generator power [kW]',gen_power])
-            output.writerow(['Generator tank [gal]',gen_tank])
-            output.writerow(['Fuel curve A coefficient [gal/h/kW]',gen_fuelA])
-            output.writerow(['Fuel curve B coefficient [gal/h]',gen_fuelB])
-            output.writerow(['Pull soc0 from previous dispatch?',vary_soc0])
-            output.writerow([])
-            output.writerow(['datetime','load kW','pv kW','batt kw','batt soc','gen1 kW','gen2 kw','gen1 gal','gen2 gal','grid kW'])
-            for i in range(L):
-                if solar_data_inverval_15min:
-                    i_pv = i
-                else:
-                    i_pv = i//4 # only increment i_pv every 4 i-increments
-                l=load.P_kw_nf.item(i)
-                p=pv.P_kw_nf.item(i_pv)
-                b=bat.P_kw_nf.item(i)
-                s=bat.soc_nf.item(i)
-                g1=gen1.P_kw_nf.item(i)
-                g2=gen2.P_kw_nf.item(i)
-                f1=gen1.fuelConsumed_gal_nf.item(i)
-                f2=gen2.fuelConsumed_gal_nf.item(i)
-                G=grid.P_kw_nf.item(i)
-                output.writerow([load.datetime[i],l,p,b,s,g1,g2,f1,f2,G])
+    if output_vectors: output_dispatch_vectors(sim)
 
     return time_to_grid_import
 
@@ -1429,43 +1356,7 @@ def simulate_utility_on(t_0,L):
             err.energy_balance()
 
     # vectors
-    if output_vectors:
-        filename = output_dir + '/vectors_{}.csv'.format(filename_param)
-        with open(filename, 'w') as file:
-            output = csv.writer(file)
-            output.writerow(['Site',site])
-            output.writerow(['mamba.py ver',__version__])
-            output.writerow(['Load profile ver',load_all.version])
-            output.writerow(['Solar profile ver',pv_all.version])
-            output.writerow(['Datetime',dt.datetime.now()])
-            output.writerow(['Simulated outage duration [days]',days])
-            output.writerow(['Outages simulated',runs])
-            output.writerow(['Program call and args',' '.join(sys.argv)])
-            output.writerow([])
-            output.writerow(['PV scaling factor', pv_scaling_factor])
-            output.writerow(['Battery power [kW]',batt_power])
-            output.writerow(['Battery energy [kWh]',batt_energy])
-            output.writerow(['Battery hours [kWh]',batt_hrs])
-            output.writerow(['Generator power [kW]',gen_power])
-            output.writerow(['Generator tank [gal]',gen_tank])
-            output.writerow(['Fuel curve A coefficient [gal/h/kW]',gen_fuelA])
-            output.writerow(['Fuel curve B coefficient [gal/h]',gen_fuelB])
-            output.writerow(['Pull soc0 from previous dispatch?',vary_soc0])
-            output.writerow([])
-            output.writerow(['datetime','load kW','pv kW','batt kw','batt soc','gen kW','fuel gal','grid kW'])
-            for i in range(L):
-                if solar_data_inverval_15min:
-                    i_pv = i
-                else:
-                    i_pv = i//4 # only increment i_pv every 4 i-increments
-                l=load.P_kw_nf.item(i)
-                p=pv.P_kw_nf.item(i_pv)
-                b=bat.P_kw_nf.item(i)
-                s=bat.soc_nf.item(i)
-                g=gen.P_kw_nf.item(i)
-                f=gen.fuelConsumed_gal_nf.item(i)
-                G=grid.P_kw_nf.item(i)
-                output.writerow([load.datetime[i],l,p,b,s,g,f,G])
+    if output_vectors: output_dispatch_vectors(sim)
 
     # print a single vector
     if batt_vector_print:
@@ -1694,42 +1585,7 @@ def simulate_entech(m_0,L):
             err.energy_balance()
 
     # vectors
-    if output_vectors:
-        filename = output_dir + '/vectors_{}.csv'.format(filename_param)
-        with open(filename, 'w') as file:
-            output = csv.writer(file)
-            output.writerow(['Site',site])
-            output.writerow(['mamba.py ver',__version__])
-            output.writerow(['Load profile ver',load_all.version])
-            output.writerow(['Solar profile ver',pv_all.version])
-            output.writerow(['Datetime',dt.datetime.now()])
-            output.writerow(['Simulated outage duration [days]',days])
-            output.writerow(['Outages simulated',runs])
-            output.writerow(['Program call and args',' '.join(sys.argv)])
-            output.writerow([])
-            output.writerow(['PV scaling factor', pv_scaling_factor])
-            output.writerow(['Battery power [kW]',batt_power])
-            output.writerow(['Battery energy [kWh]',batt_energy])
-            output.writerow(['Battery hours [kWh]',batt_hrs])
-            output.writerow(['Generator power [kW]',gen_power])
-            output.writerow(['Generator tank [gal]',gen_tank])
-            output.writerow(['Fuel curve A coefficient [gal/h/kW]',gen_fuelA])
-            output.writerow(['Fuel curve B coefficient [gal/h]',gen_fuelB])
-            output.writerow(['Pull soc0 from previous dispatch?',vary_soc0])
-            output.writerow([])
-            output.writerow(['datetime','load ec kw','load hs kw','load hc kw','pv kw','bat kw','bat soc','gen kw','grid ec kw','grid hs kw','grid hc kw'])
-            for i in range(L):
-                l1=load1.P_kw_nf.item(i)
-                l2=load2.P_kw_nf.item(i)
-                l3=load3.P_kw_nf.item(i)
-                p=pv.P_kw_nf.item(i)
-                b=bat.P_kw_nf.item(i)
-                s=bat.soc_nf.item(i)
-                g=gen.P_kw_nf.item(i)
-                G1=grid1.P_kw_nf.item(i)
-                G2=grid2.P_kw_nf.item(i)
-                G3=grid3.P_kw_nf.item(i)
-                output.writerow([load1.datetime[i],l1,l2,l3,p,b,s,g,G1,G2,G3])
+    if output_vectors: output_dispatch_vectors(sim)
 
     # print a single vector
     if batt_vector_print:
@@ -1826,49 +1682,153 @@ def simulate_entech(m_0,L):
 #
 def output_resilience_results(sim):
     if superloop_enabled:
-          filename = output_dir + '/resilience_{}_l{:.2f}_pv{:.2f}_b{:.0f}-{:.1f}h.csv'.format(filename_param,load_scaling_factor, pv_scaling_factor, batt_power, batt_hrs)
+        filename = output_dir + '/resilience_{}_l{:.2f}_pv{:.2f}_b{:.0f}-{:.1f}h.csv'.format(filename_param,load_scaling_factor, pv_scaling_factor, batt_power, batt_hrs)
     else:
         filename = output_dir + '/resilience_{}.csv'.format(filename_param)
     with open(filename, 'w') as file:
         output = csv.writer(file)
-        output.writerow(['Site',site])
-        output.writerow(['mamba.py ver',__version__])
-        output.writerow(['Load profile ver',load_all.version])
-        output.writerow(['Solar profile ver',pv_all.version])
-        output.writerow(['Datetime',dt.datetime.now()])
-        output.writerow(['Simulated outage duration [days]',days])
-        output.writerow(['Outages simulated',runs])
-        output.writerow(['Program call and args',' '.join(sys.argv)])
-        output.writerow(['PV scaling factor', pv_scaling_factor])
-        output.writerow(['Battery power [kW]',batt_power])
-        output.writerow(['Battery energy [kWh]',batt_energy])
-        output.writerow(['Battery hours [kWh]',batt_hrs])
-        output.writerow(['Pull soc0 from previous dispatch?',vary_soc0])
+        output.writerow(['# Site:',site])
+        output.writerow(['# mamba.py ver:',__version__])
+        output.writerow(['# Load profile ver:',load_all.version])
+        output.writerow(['# Solar profile ver:',pv_all.version])
+        output.writerow(['# Datetime:',dt.datetime.now()])
+        output.writerow(['# Runtime [s]:',results.code_runtime_s])
+        output.writerow(['# Simulated outage duration [days]:',days])
+        output.writerow(['# Outages simulated:',runs])
+        output.writerow(['# Program call and args:',' '.join(sys.argv)])
+        output.writerow(['# PV scaling factor:', pv_scaling_factor])
+        output.writerow(['# Battery power [kW]:',batt_power])
+        output.writerow(['# Battery energy [kWh]:',batt_energy])
+        output.writerow(['# Battery hours [kWh]:',batt_hrs])
+        output.writerow(['# Pull soc0 from previous dispatch?:',vary_soc0])
         if sim == 'rmg':
-            output.writerow(['Generator 1 power [kW]',gen1_power])
-            output.writerow(['Generator 1 tank [gal]',gen1_tank])
-            output.writerow(['Generator 1 fuel curve A coefficient [gal/h/kW]',gen1_fuelA])
-            output.writerow(['Generator 1 fuel curve B coefficient [gal/h]',gen1_fuelB])
-            output.writerow(['Generator 2 power [kW]',gen2_power])
-            output.writerow(['Generator 2 tank [gal]',gen2_tank])
-            output.writerow(['Generator 2 fuel curve A coefficient [gal/h/kW]',gen2_fuelA])
-            output.writerow(['Generator 2 fuel curve B coefficient [gal/h]',gen2_fuelB])
+            output.writerow(['# Generator 1 power [kW]:',gen1_power])
+            output.writerow(['# Generator 1 tank [gal]:',gen1_tank])
+            output.writerow(['# Generator 1 fuel curve A coefficient [gal/h/kW]:',gen1_fuelA])
+            output.writerow(['# Generator 1 fuel curve B coefficient [gal/h]:',gen1_fuelB])
+            output.writerow(['# Generator 2 power [kW]:',gen2_power])
+            output.writerow(['# Generator 2 tank [gal]:',gen2_tank])
+            output.writerow(['# Generator 2 fuel curve A coefficient [gal/h/kW]:',gen2_fuelA])
+            output.writerow(['# Generator 2 fuel curve B coefficient [gal/h]:',gen2_fuelB])
         else:
-            output.writerow(['Generator power [kW]',gen_power])
-            output.writerow(['Generator tank [gal]',gen_tank])
-            output.writerow(['Fuel curve A coefficient [gal/h/kW]',gen_fuelA])
-            output.writerow(['Fuel curve B coefficient [gal/h]',gen_fuelB])
-        output.writerow(['Confidence 72 h',conf_72h])
-        output.writerow(['Confidence 336 h',conf_336h])
-        output.writerow(['Confidence {} h'.format(Xh),conf_Xh])
-        output.writerow(['Max TTFF [h]', max_ttff])
-        output.writerow(['Avg TTFF [h]', avg_ttff])
-        output.writerow(['Min TTFF [h]', min_ttff])
-        output.writerow([])
+            output.writerow(['# Generator power [kW]:',gen_power])
+            output.writerow(['# Generator tank [gal]:',gen_tank])
+            output.writerow(['# Fuel curve A coefficient [gal/h/kW]:',gen_fuelA])
+            output.writerow(['# Fuel curve B coefficient [gal/h]:',gen_fuelB])
+        if not superloop_enabled:
+            output.writerow(['# Confidence 72 h:',conf_72h])
+            output.writerow(['# Confidence 336 h:',conf_336h])
+            output.writerow(['# Confidence {} h:'.format(Xh),conf_Xh])
+            output.writerow(['# Max TTFF [h]:', max_ttff])
+            output.writerow(['# Avg TTFF [h]:', avg_ttff])
+            output.writerow(['# Min TTFF [h]:', min_ttff])
         output.writerow(['Outage','Outage Start', 'Time to First Failure [h]', 'Cumulative Operating Time [h]'])
         for i in range(runs):
             output.writerow([i+1,results.datetime[i],results.time_to_grid_import_h_nf[i],results.onlineTime_h_ni[i]])
 
+#
+# output dispatch vectors for a single run
+#
+def output_dispatch_vectors(sim):
+    filename = output_dir + '/vectors_{}.csv'.format(filename_param)
+    with open(filename, 'w') as file:
+        output = csv.writer(file)
+        output.writerow(['# Site:',site])
+        output.writerow(['# mamba.py ver:',__version__])
+        output.writerow(['# Load profile ver:',load_all.version])
+        output.writerow(['# Solar profile ver:',pv_all.version])
+        output.writerow(['# Datetime:',dt.datetime.now()])
+        output.writerow(['# Runtime [s]:',results.code_runtime_s])
+        output.writerow(['# Simulated outage duration [days]:',days])
+        output.writerow(['# Outages simulated:',runs])
+        output.writerow(['# Program call and args:',' '.join(sys.argv)])
+        output.writerow(['# PV scaling factor:', pv_scaling_factor])
+        output.writerow(['# Battery power [kW]:',batt_power])
+        output.writerow(['# Battery energy [kWh]:',batt_energy])
+        output.writerow(['# Battery hours [kWh]:',batt_hrs])
+        output.writerow(['# Pull soc0 from previous dispatch?:',vary_soc0])
+        if sim == 'rmg':
+            output.writerow(['# Generator 1 power [kW]:',gen1_power])
+            output.writerow(['# Generator 1 tank [gal]:',gen1_tank])
+            output.writerow(['# Generator 1 fuel curve A coefficient [gal/h/kW]:',gen1_fuelA])
+            output.writerow(['# Generator 1 fuel curve B coefficient [gal/h]:',gen1_fuelB])
+            output.writerow(['# Generator 2 power [kW]:',gen2_power])
+            output.writerow(['# Generator 2 tank [gal]:',gen2_tank])
+            output.writerow(['# Generator 2 fuel curve A coefficient [gal/h/kW]:',gen2_fuelA])
+            output.writerow(['# Generator 2 fuel curve B coefficient [gal/h]:',gen2_fuelB])
+        else:
+            output.writerow(['# Generator power [kW]:',gen_power])
+            output.writerow(['# Generator tank [gal]:',gen_tank])
+            output.writerow(['# Fuel curve A coefficient [gal/h/kW]:',gen_fuelA])
+            output.writerow(['# Fuel curve B coefficient [gal/h]:',gen_fuelB])
+        if sim == 'rmg':
+            output.writerow(['datetime','load kW','pv kW','batt kw','batt soc','gen1 kW','gen2 kw','gen1 gal','gen2 gal','grid kW'])
+        elif sim == 'ue':
+            output.writerow(['datetime','load ec kw','load hs kw','load hc kw','pv kw','bat kw','bat soc','gen kw','grid ec kw','grid hs kw','grid hc kw'])
+        else:
+            output.writerow(['datetime','load kW','pv kW','batt kw','batt soc','gen kW','fuel gal','grid kW'])
+        for i in range(L):
+            if solar_data_inverval_15min:
+                i_pv = i
+            else:
+                i_pv = i//4 # only increment i_pv every 4 i-increments
+            l=load.P_kw_nf.item(i)
+            p=pv.P_kw_nf.item(i_pv)
+            b=bat.P_kw_nf.item(i)
+            s=bat.soc_nf.item(i)
+            g=gen.P_kw_nf.item(i)
+            f=gen.fuelConsumed_gal_nf.item(i)
+            G=grid.P_kw_nf.item(i)
+            if sim == 'rmg':
+                g1=gen1.P_kw_nf.item(i)
+                g2=gen2.P_kw_nf.item(i)
+                f1=gen1.fuelConsumed_gal_nf.item(i)
+                f2=gen2.fuelConsumed_gal_nf.item(i)
+                output.writerow([load.datetime[i],l,p,b,s,g1,g2,f1,f2,G])
+            elif sim == 'ue':
+                l1=load1.P_kw_nf.item(i)
+                l2=load2.P_kw_nf.item(i)
+                l3=load3.P_kw_nf.item(i)
+                G1=grid1.P_kw_nf.item(i)
+                G2=grid2.P_kw_nf.item(i)
+                G3=grid3.P_kw_nf.item(i)
+                output.writerow([load1.datetime[i],l1,l2,l3,p,b,s,g,G1,G2,G3])
+            else:
+                output.writerow([load.datetime[i],l,p,b,s,g,f,G])
+
+#
+# output table of superloop parameters and summary resilience results
+#
+def output_superloop_results(sim):
+    filename = output_dir + '/resilience_superloop.csv'
+    with open(filename, 'w') as file:
+        output = csv.writer(file)
+        output.writerow(['# Site:',site])
+        output.writerow(['# mamba.py ver:',__version__])
+        output.writerow(['# Load profile ver:',load_all.version])
+        output.writerow(['# Solar profile ver:',pv_all.version])
+        output.writerow(['# Datetime:',dt.datetime.now()])
+        output.writerow(['# Runtime [s]:',results.code_runtime_s])
+        output.writerow(['# Simulated outage duration [days]:',days])
+        output.writerow(['# Program call and args:',' '.join(sys.argv)])
+        output.writerow(['# Pull soc0 from previous dispatch?:',vary_soc0])
+        if sim == 'rmg':
+            output.writerow(['# Generator 1 power [kW]:',gen1_power])
+            output.writerow(['# Generator 1 tank [gal]:',gen1_tank])
+            output.writerow(['# Generator 1 fuel curve A coefficient [gal/h/kW]:',gen1_fuelA])
+            output.writerow(['# Generator 1 fuel curve B coefficient [gal/h]:',gen1_fuelB])
+            output.writerow(['# Generator 2 power [kW]:',gen2_power])
+            output.writerow(['# Generator 2 tank [gal]:',gen2_tank])
+            output.writerow(['# Generator 2 fuel curve A coefficient [gal/h/kW]:',gen2_fuelA])
+            output.writerow(['# Generator 2 fuel curve B coefficient [gal/h]:',gen2_fuelB])
+        else:
+            output.writerow(['# Generator power [kW]:',gen_power])
+            output.writerow(['# Generator tank [gal]:',gen_tank])
+            output.writerow(['# Fuel curve A coefficient [gal/h/kW]:',gen_fuelA])
+            output.writerow(['# Fuel curve B coefficient [gal/h]:',gen_fuelB])
+        output.writerow(['Load Scaling factor', 'PV scaling factor','Batt power [kW]', 'Batt energy [kWh]', 'Batt hrs [h]', 'Generator power [kVA]','Confidence 72h','Confidence 336h','Confidence {}h'.format(Xh),'Min TTFF [h]','Avg TTFF [h]', 'Max TTFF [h]'])
+        for i in range(len(max_ttff)):
+            output.writerow([load_scale_vals[i],pv_scale_vals[i],batt_power_vals[i], batt_energy_vals[i], batt_hrs_vals[i], gen_power_vals[i], conf_72h[i],conf_336h[i],conf_Xh[i],min_ttff[i],avg_ttff[i],max_ttff[i]])
 
 
 ################################################################################
@@ -2356,19 +2316,7 @@ results.code_runtime_s = t_elapsed_dt.total_seconds()
 # Outputs
 #
 
-if superloop_enabled:
-    filename = output_dir + '/resilience_superloop.csv'
-    with open(filename, 'w') as file:
-        output = csv.writer(file)
-        output.writerow(['Site',site])
-        output.writerow(['Mamba.py v',__version__])
-        output.writerow(['Datetime',dt.datetime.now()])
-        output.writerow(['Runtime [s]',results.code_runtime_s])
-        output.writerow(['Gen tank size [gal]', gen_tank])
-        output.writerow([])
-        output.writerow(['Load Scaling factor', 'PV scaling factor','Batt energy [kWh]', 'Batt Power [kW]', 'Batt hrs [h]', 'Generator power [kVA]','Confidence 72h','Confidence 336h','Confidence {}h'.format(Xh),'Min TTFF [h]','Avg TTFF [h]', 'Max TTFF [h]'])
-        for i in range(len(max_ttff)):
-            output.writerow([load_scale_vals[i],pv_scale_vals[i],batt_energy_vals[i], batt_power_vals[i], batt_hrs_vals[i], gen_power_vals[i], conf_72h[i],conf_336h[i],conf_Xh[i],min_ttff[i],avg_ttff[i],max_ttff[i]])
+if superloop_enabled: output_superloop_results(sim)
 
 # plots
 if plots_on and (sim == 'ue'):
