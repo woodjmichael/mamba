@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "6.19.7"
+__version__ = "6.22"
 
 #
 # Versions
 #
 
+#   6.22 -  integrate 6.21 and 6.21.1: peak shaving with la jolla custom charging window (12-6am), batt efficiency arg
 #   6.19.7 - dont shut off gen without warming up in case of negative power request
 #   6.19.6 - csv meta data formatted as comments, no empty rows
 #   6.19.5 - resilience_.csv only one empty row (before data), load scaling added to superloop program arguments
@@ -286,7 +287,7 @@ class MicrogridClass:
 #
 
 class BattClass:
-    def __init__(me, Pn_kw, En_kwh, soc0, timestep, length):
+    def __init__(me, Pn_kw, En_kwh, soc0, batt_eff, timestep, length):
         me.Pn_kw = Pn_kw                            # pos:dischg, neg:chg
         me.En_kwh = En_kwh
         me.soc0 = soc0
@@ -295,8 +296,8 @@ class BattClass:
         me.P_kw_nf = np.zeros((length,), dtype=float)
         me.soc_nf = soc0 * np.ones((length,), dtype=float)
         me.soc_flag = 0                             # binary
-        me.eff_chg = 0.95
-        me.eff_dischg = 0.95
+        me.eff_chg = batt_eff
+        me.eff_dischg = batt_eff
         me.daytime_gen_chg = batt_daytime_gen_chg
 
     def clear(me):
@@ -415,12 +416,10 @@ class DemandTargetsClass:
         me.import_tou_schedule(site)    # optional
 
     def import_demand_targets(me,site):
-        print ('broken!')
-        quit()
 
         filename = './Data/Demand targets/' + site + '_demand_targets.csv'
         try:
-            me.monthly = np.genfromtxt(filename, delimiter=',')[1:]
+            me.monthly = np.genfromtxt(filename, delimiter=',')[1:13]
             if me.monthly.ndim == 1:
                 me.monthly = np.expand_dims(me.monthly, axis=1)   # make sure targets array is 2D
 
@@ -429,8 +428,6 @@ class DemandTargetsClass:
             quit()
 
     def import_tou_schedule(me,site):
-        print ('broken!')
-        quit()
 
         filename = './Data/Demand targets/' + site + '_tou_schedule.csv'
         try:
@@ -480,11 +477,7 @@ class DemandTargetsClass:
     # look up and return demand target based on month and TOU level
     def get(me,i):
         month = load.datetime[i].month
-
         tou_level_now = me.get_tou_level(i)
-
-        if debug_demand:
-            print('{} {} tou_res {} tou_level_now {} demand_target {}'.format(i,load.datetime[i],me.tou_res_minutes,tou_level_now,me.monthly[month-1,tou_level_now]))
 
         return me.monthly[month-1,tou_level_now]
 
@@ -1312,12 +1305,40 @@ def simulate_utility_on(t_0,L):
             LSBimbalance = LSimbalance - battpower
             gpower = grid.power_request(i, LSBimbalance)
 
+        # peak shaving with charging batt from grid during certain hours
+        elif peak_shaving and grid_charging and charging_period:
+
+            # 6.21.1 logic
+            demand_target = demand_targets.get(i)
+
+            if ((load.datetime[i].hour < 6)):# or ((load.datetime[i].hour>10) and load.datetime[i].hour<14)):
+                battpower = bat.power_request(i,LSimbalance - demand_target)
+
+            #if load.datetime[i].hour > 6:
+            else:
+                if LSimbalance > demand_target:
+                    battpower = bat.power_request(i,LSimbalance - demand_target)
+                else:
+                    battpower = bat.power_request(i,0)
+            gpower = grid.power_request(i,LSimbalance - battpower)
+
+            # 6.21 logic
+            # demand_target = demand_targets.get(i)
+            # if load.datetime[i].hour > 6:
+            #     if LSimbalance > demand_target:
+            #         battpower = bat.power_request(i,LSimbalance - demand_target)
+            #     else:
+            #         battpower = bat.power_request(i,0)
+            # else:
+            #     battpower = bat.power_request(i,LSimbalance - demand_target)
+            # gpower = grid.power_request(i,LSimbalance - battpower)
+
+
         # peak shaving with charging batt from grid
         elif peak_shaving and grid_charging:
             demand_target = demand_targets.get(i)
             battpower = bat.power_request(i,LSimbalance - demand_target)
-            LSBimbalance = LSimbalance - battpower
-            gpower = grid.power_request(i,LSBimbalance)
+            gpower = grid.power_request(i,LSimbalance - battpower)
 
 
         # fringe case: peak shaving without charging batt from grid
@@ -1423,13 +1444,19 @@ def simulate_utility_on(t_0,L):
 
 
         results.demands = np.asarray(demands)
-        #np.set_printoptions(precision=1,suppress=True)
-        print('\ndemands [kW]:\n{}'.format(results.demands))
-        print('\ndemand errors [kW]:\n{}'.format(results.demands - demand_targets.monthly))
+        results.errors = results.demands - demand_targets.monthly
+
+        for j in range(demand_targets.monthly.shape[1]):
+            print('\ntou',j,'\nTargets     Demands    Errors (pos bad)')
+            for i in range(demand_targets.monthly.shape[0]):
+                val1 = demand_targets.monthly[i][j]
+                val2 = results.demands[i][j]
+                val3 = results.errors[i][j]
+                print('{:.1f}       {:.1f}      {:.1f}'.format(val1,val2,val3))
 
     # print checksum
     if debug:
-        print('\nchecksum: {:.3f}'.format(np.sum(bat.P_kw_nf)))
+        print('\ndebug checksum: {:.3f}'.format(np.sum(bat.P_kw_nf)))
 
 #
 # Simulate entech (utility on)
@@ -1827,6 +1854,8 @@ def output_superloop_results(sim):
         for i in range(len(max_ttff)):
             output.writerow([load_scale_vals[i],pv_scale_vals[i],batt_power_vals[i], batt_energy_vals[i], batt_hrs_vals[i], gen_power_vals[i], conf_72h[i],conf_336h[i],conf_Xh[i],min_ttff[i],avg_ttff[i],max_ttff[i]])
 
+    return None # so github 'compare' knows the function stops
+
 
 ################################################################################
 #
@@ -1863,6 +1892,7 @@ hard_code_superloop = 0
 peak_shaving = 0
 grid_online = 0
 grid_charging = 0
+charging_period = False
 batt_daytime_gen_chg = False
 entech = 0
 PS_arb_thresh = 0.4
@@ -1878,6 +1908,7 @@ batt_power = 0.         # kw
 batt_hrs = 0.           # kWh/kW
 batt_energy = 0.       # kwh
 dod = 1.                 # depth of discharge
+batt_eff = 0.95
 gen_power = 0.           # kw
 gen1_power, gen2_power = 0., 0. #kw
 gen_tank = 0.          # gal
@@ -1926,6 +1957,9 @@ if len(sys.argv) > 1:
         elif sys.argv[i] == '-be':
             batt_energy = float(sys.argv[i+1])
 
+        elif sys.argv[i] == '-bef':
+            batt_eff = float(sys.argv[i+1])
+
         elif sys.argv[i] == '-bd':
             dod = float(sys.argv[i+1])
             batt_energy = batt_energy * dod
@@ -1935,6 +1969,9 @@ if len(sys.argv) > 1:
 
         elif sys.argv[i] == '-bdg':
             batt_daytime_gen_chg = True
+
+        elif sys.argv[i] == '-bcp':
+            charging_period = True
 
         elif sys.argv[i] == '-gp':
             gen_power = float(sys.argv[i+1])
@@ -2243,7 +2280,7 @@ for load_scaling_factor in load_scale_vector:
                             load3 =  DataClass(  15.*60.,L)                 # timestep[s]
                         pv =    PVClass(  15.*60.,L)                   # timestep[s]
                         gen =   GenClass(   gen_power,gen_fuelA,gen_fuelB,gen_tank,15.*60.,L)   # kW, fuel A, fuel B, tank[gal], tstep[s]
-                        bat =   BattClass(  batt_power,batt_energy,1,15*60.,L)      # kW, kWh, soc0 tstep[s]
+                        bat =   BattClass(  batt_power,batt_energy,1,batt_eff,15*60.,L)      # kW, kWh, soc0 tstep[s]
                         grid =  GridClass(  1000.,L)                    # kW
                         if sim == 'ue':
                             grid1 =  GridClass(1000.,L)                    # kW
