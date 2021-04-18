@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "6.19.6"
+__version__ = "6.19.7"
 
 #
 # Versions
 #
 
+#   6.19.7 - dont shut off gen without warming up in case of negative power request
 #   6.19.6 - csv meta data formatted as comments, no empty rows
 #   6.19.5 - resilience_.csv only one empty row (before data), load scaling added to superloop program arguments
 #   6.19.4 - bug in sim_res() where battpower was wrong when tank nearly empty
@@ -164,9 +165,7 @@ class GenClass:
             p_req = 0
         if (p_req > 0) & me.cool_down_complete():
             p_final = min(p_req,  me.Pn_kw, me.Pmax_tank())
-        elif (p_req == 0) & me.warm_up_complete():
-            p_final = 0
-        elif (p_req < 0):
+        elif (p_req == 0 or p_req < 0) & me.warm_up_complete():
             p_final = 0
         else:
             p_final = me.prev_power
@@ -180,9 +179,7 @@ class GenClass:
             p_req = 0
         if (p_req > 0) & me.cool_down_complete():
             p_final = min(p_req,  me.Pn_kw, me.Pmax_tank())
-        elif (p_req == 0) & me.warm_up_complete():
-            p_final = 0
-        elif (p_req < 0):
+        elif (p_req == 0 or p_req < 0) & me.warm_up_complete():
             p_final = 0
         else:
             p_final = me.prev_power
