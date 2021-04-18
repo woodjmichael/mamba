@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "6.22"
+__version__ = "6.23"
 
 #
 # Versions
 #
 
+#   6.23 - minor peak shaving change in case of extra solar
 #   6.22 -  integrate 6.21 and 6.21.1: peak shaving with la jolla custom charging window (12-6am), batt efficiency arg
 #   6.19.7 - dont shut off gen without warming up in case of negative power request
 #   6.19.6 - csv meta data formatted as comments, no empty rows
@@ -1307,32 +1308,17 @@ def simulate_utility_on(t_0,L):
 
         # peak shaving with charging batt from grid during certain hours
         elif peak_shaving and grid_charging and charging_period:
-
-            # 6.21.1 logic
             demand_target = demand_targets.get(i)
-
-            if ((load.datetime[i].hour < 6)):# or ((load.datetime[i].hour>10) and load.datetime[i].hour<14)):
+            if LSimbalance < 0: # don't spill extra solar
+                battpower = bat.power_request(i,LSimbalance)
+            elif load.datetime[i].hour < 6: # only charge from grid in this period
                 battpower = bat.power_request(i,LSimbalance - demand_target)
-
-            #if load.datetime[i].hour > 6:
-            else:
-                if LSimbalance > demand_target:
+            else: # outside of period..
+                if LSimbalance > demand_target: # hit demand target
                     battpower = bat.power_request(i,LSimbalance - demand_target)
-                else:
+                else: # don't charge
                     battpower = bat.power_request(i,0)
             gpower = grid.power_request(i,LSimbalance - battpower)
-
-            # 6.21 logic
-            # demand_target = demand_targets.get(i)
-            # if load.datetime[i].hour > 6:
-            #     if LSimbalance > demand_target:
-            #         battpower = bat.power_request(i,LSimbalance - demand_target)
-            #     else:
-            #         battpower = bat.power_request(i,0)
-            # else:
-            #     battpower = bat.power_request(i,LSimbalance - demand_target)
-            # gpower = grid.power_request(i,LSimbalance - battpower)
-
 
         # peak shaving with charging batt from grid
         elif peak_shaving and grid_charging:
