@@ -1,17 +1,18 @@
 # mamba.py
 # Fast economic dispatch simulation of PV-battery-generator microgrids
 
-# python 3.7
+# python 3.8
 
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "6.23"
+__version__ = "7.0"
 
 #
 # Versions
 #
 
+# 7.0 - add mambavis.py, --test automatic testing, new -b -g args and -s modified, python 3.8 
 #   6.23 - minor peak shaving change in case of extra solar
 #   6.22 -  integrate 6.21 and 6.21.1: peak shaving with la jolla custom charging window (12-6am), batt efficiency arg
 #   6.19.7 - dont shut off gen without warming up in case of negative power request
@@ -418,7 +419,10 @@ class DemandTargetsClass:
 
     def import_demand_targets(me,site):
 
-        filename = './Data/Demand targets/' + site + '_demand_targets.csv'
+        if testing:
+            filename = './Data/Testing/' + site + '/' + site + '_demand_targets.csv'
+        else:
+            filename = './Data/Demand targets/' + site + '_demand_targets.csv'
         try:
             me.monthly = np.genfromtxt(filename, delimiter=',')[1:13]
             if me.monthly.ndim == 1:
@@ -430,7 +434,10 @@ class DemandTargetsClass:
 
     def import_tou_schedule(me,site):
 
-        filename = './Data/Demand targets/' + site + '_tou_schedule.csv'
+        if testing:
+            filename = './Data/Testing/' + site + '/' + site + '_tou_schedule.csv'
+        else:
+            filename = './Data/Demand targets/' + site + '_tou_schedule.csv'
         try:
             me.tou_sched = np.genfromtxt(filename, dtype=int, delimiter=',')[1:]
             me.calc_tou_levels()
@@ -555,11 +562,11 @@ def help_printout():
     print('')
     print('Typical Command Line Arguments')
     print(' Simulation type:        -sim [simulation type]      e.g. -sim r')
-    print(' Site name:              -s  [sitename]              e.g. -s mugrid_test')
-    print(' Battery power:          -bp [power kW]              e.g. -bp 60')
-    print(' Battery energy:         -be [energy kWh]            e.g. -be 120')
-    print(' Generator power:        -gp [power kW]              e.g. -gp 60')
-    print(' Generator tank:         -gt [size gal]              e.g. -gt 200')
+    print(' Site name:              -s  [sitename] [optional: sim]')
+    print('                                                     e.g. -s mugrid_test')
+    print('                                                     e.g. -s mugrid_test r')
+    print(' Battery:                -b [power kW] [energy kwh]  e.g. -b 60 120')
+    print(' Generator:              -g [power kW] [tank gal]    e.g. -gp 50 200')
     print('')
     print('Optional Command Line Arguments (must come after -sim)')
     print(' Simulation resilience multiple generators')
@@ -582,6 +589,182 @@ def help_printout():
     print('                         --plots [ | u]              e.g. --plots        default=OFF')
     print('Debug (see code):        --debug [ | type]           e.g. --debug res    default=OFF')
     print('')
+
+
+#
+# check indexing and maybe print debug
+#
+def check_indexing():
+
+    # check indexing
+    # beginning and ending date and hour should match between load and pv
+    if (load.datetime[0].day    - pv.datetime[0].day):
+        err.indexing()
+    if (load.datetime[-1].day   - pv.datetime[-1].day):
+        err.indexing()
+    if (load.datetime[0].hour   - pv.datetime[0].hour):
+        err.indexing()
+    if (load.datetime[-1].hour  - pv.datetime[-1].hour):
+        err.indexing()
+
+    if debug_indexing:
+        print('LOAD')
+        print('m_0={:d}'.format(m_0) + ' m_end={:d}'.format(m_end))
+        print(load.datetime[0])
+        print(load.datetime[-1])
+        print(load.P_kw_nf.size)
+        print(len(load.datetime))
+        print('')
+
+        print('PV')
+        print('n_0={:d}'.format(n_0) + ' n_end={:d}'.format(n_end))
+        print(pv.datetime[0])
+        print(pv.datetime[-1])
+        print(pv.P_kw_nf.size)
+        print(len(pv.datetime))
+        print('')      
+
+def configure_sim(sim):
+    global grid_online, gen_power, simulation_interval, runs, days, L, output_vectors
+    global output_resilience
+    global gen1_power, gen1_tank, gen2_power, gen2_tank, gen_power
+    global grid_charging, entech, peak_shaving
+
+    if sim == 'r':
+        grid_online = 0
+        simulation_interval = 3
+        runs = 365*24//simulation_interval   # number of iterations
+        days = 14                          # length of grid outage
+        L = days*24*4                     # length of simulation in timesteps
+        output_resilience = 1
+
+    elif sim == 'rmg':
+        gen1_power = float(sys.argv[i+2])
+        gen1_tank = float(sys.argv[i+3])
+        gen2_power = float(sys.argv[i+4])
+        gen2_tank = float(sys.argv[i+5])
+        grid_online = 0
+        simulation_interval = 3
+        runs = 365*24//simulation_interval   # number of iterations
+        days = 14                          # length of grid outage
+        L = days*24*4                     # length of simulation in timesteps
+        output_resilience = 1
+
+    elif sim == 'ua':
+        grid_online = 1
+        #grid_charging = 1
+        gen_power = 0
+        simulation_interval = 8760
+        runs = 1
+        days = 365
+        L = days*24*4                     # length of simulation in timesteps
+        output_vectors = 1
+
+    elif sim == 'up':
+        grid_online = 1
+        grid_charging = 1
+        gen_power = 0
+        simulation_interval = 8760
+        runs = 1
+        days = 365
+        L = days*24*4                     # length of simulation in timesteps
+        peak_shaving = 1
+        output_vectors = 1
+
+    elif sim == 'ue':
+        grid_online = 1
+        grid_charging = 1
+        entech = 1
+        gen_power = 0
+        simulation_interval = 8760
+        runs = 1
+        days = 365
+        L = days*24*4                     # length of simulation in timesteps
+        peak_shaving = 1
+        output_vectors = 1
+
+    else:
+        print('\033[1;31;1m fatality: no simulation type selected')
+        quit()   
+
+def configure_test(test,sim):
+    global grid_online, gen_power, simulation_interval, runs, days, L, output_vectors
+    global output_resilience
+    global gen1_power, gen1_tank, gen2_power, gen2_tank, gen_power, gen_tank
+    global grid_charging, entech, peak_shaving
+    global testing, filename_param, site
+    global batt_power, batt_energy
+    global load_scaling_factor, pv_scaling_factor
+    global plots_on, plot_pv_first, plot_grid_first
+    global debug, debug_energy, debug_res
+
+    testing = True
+    filename_param = 'testing'
+    debug = 1  
+
+    if test == 'mu':
+        site = 'mugrid_test'                      
+        batt_power = 100.         # kw
+        batt_energy = 200.       # kwh
+        gen_power = 100.           # kw
+        gen_tank = 300.          # gal
+        load_scaling_factor = 100
+        pv_scaling_factor = 100
+        runs = 1
+        days = 3
+        L = days*24*4           # length of simulation in timesteps
+        
+        plots_on = 1
+        plot_pv_first = 1
+        plot_grid_first = 0
+        
+        if sim == 'ua':
+            debug_energy = 1           
+            grid_online = 1
+
+        elif sim == 'r':
+            debug_res = 1
+            grid_online = 0
+
+        elif sim =='up':
+            print('not implemented yet')
+            quit()
+
+    elif test == 'br':
+        site = 'badriver_clinic'       
+        batt_power = 200.         # kw
+        batt_energy = 580*.98       # kwh
+        gen_power = 200.           # kw
+        gen_tank = 400.          # gal
+
+        if sim == 'ua':
+            grid_online = 1
+            gen_power = 0
+            simulation_interval = 8760
+            runs = 1
+            days = 365
+            L = days*24*4                     # length of simulation in timesteps
+
+        elif sim == 'up':
+            grid_online = 1
+            grid_charging = 1
+            gen_power = 0
+            simulation_interval = 8760
+            runs = 1
+            days = 365
+            L = days*24*4                     # length of simulation in timesteps
+            peak_shaving = 1              
+
+        elif sim == 'r':
+            grid_online = 0
+            simulation_interval = 3
+            runs = 365*24//simulation_interval   # number of iterations
+            days = 14                          # length of grid outage
+            L = days*24*4                     # length of simulation in timesteps
+            output_resilience = 1         
+
+
+
 
 #
 # Find load-pv data offset
@@ -727,7 +910,10 @@ def import_load_data_ue(site, load_stats):
 
 def import_load_data_vc(site, load_stats=False):
 
-    filename = '../../Profiles VC/Load/profile_load_' + site + '.csv'
+    if testing:
+        filename = './Data/Testing/' + site + '/profile_load_' + site + '.csv'
+    else:
+        filename = '../../Profiles VC/Load/profile_load_' + site + '.csv'
 
     with open(filename,'r') as f:
         datacsv = list(csv.reader(f, delimiter=","))
@@ -808,7 +994,10 @@ def import_pv_data(site):
 
 def import_pv_data_vc(site):
 
-    filename = '../../Profiles VC/Solar/profile_solar_' + site + '.csv'
+    if testing:
+        filename = './Data/Testing/' + site + '/profile_solar_' + site + '.csv'
+    else:
+        filename = '../../Profiles VC/Solar/profile_solar_' + site + '.csv'
 
     with open(filename,'r') as f:
         datacsv = list(csv.reader(f, delimiter=","))
@@ -938,18 +1127,9 @@ def simulate_resilience(t_0,L):
     load.P_kw_nf = load_all.P_kw_nf[m_0:m_end]
     load.datetime = load_all.datetime[m_0:m_end]
 
-    if debug_indexing:
-        print('LOAD')
-        print('m_0={:d}'.format(m_0) + ' m_end={:d}'.format(m_end))
-        print(load.datetime[0])
-        print(load.datetime[-1])
-        print(load.P_kw_nf.size)
-        print(len(load.datetime))
-        print('')
+     
 
     # temporarily store small chunk "all pv" vector in "pv"
-
-
 
     if solar_data_inverval_15min:
         n_0 = t_0 + pv_all.offset
@@ -965,28 +1145,9 @@ def simulate_resilience(t_0,L):
 
 
     pv.P_kw_nf = pv_all.P_kw_nf[n_0:n_end]
-    pv.datetime = pv_all.datetime[n_0:n_end]
+    pv.datetime = pv_all.datetime[n_0:n_end]  
 
-    if debug_indexing:
-        print('PV')
-        print('n_0={:d}'.format(n_0) + ' n_end={:d}'.format(n_end))
-        print(pv.datetime[0])
-        print(pv.datetime[-1])
-        print(pv.P_kw_nf.size)
-        print(len(pv.datetime))
-        print('')
-
-    # check indexing
-    # beginning and ending date and hour should match between load and pv
-    if (load.datetime[0].day    - pv.datetime[0].day):
-        err.indexing()
-    if (load.datetime[-1].day   - pv.datetime[-1].day):
-        err.indexing()
-    if (load.datetime[0].hour   - pv.datetime[0].hour):
-        err.indexing()
-    if (load.datetime[-1].hour  - pv.datetime[-1].hour):
-        err.indexing()
-
+    check_indexing()
 
     #
     # Algorithm
@@ -1077,19 +1238,7 @@ def simulate_resilience_multigen(t_0,L):
     load.P_kw_nf = load_all.P_kw_nf[m_0:m_end]
     load.datetime = load_all.datetime[m_0:m_end]
 
-    if debug_indexing:
-        print('LOAD')
-        print('m_0={:d}'.format(m_0) + ' m_end={:d}'.format(m_end))
-        print(load.datetime[0])
-        print(load.datetime[-1])
-        print(load.P_kw_nf.size)
-        print(len(load.datetime))
-        print('')
-
     # temporarily store small chunk "all pv" vector in "pv"
-
-
-
     if solar_data_inverval_15min:
         n_0 = t_0 + pv_all.offset
         n_end = n_0 + L
@@ -1101,31 +1250,10 @@ def simulate_resilience_multigen(t_0,L):
         # where in "all load" data this run will end
         n_end = n_0 + L//4                # offset usually 0
 
-
-
     pv.P_kw_nf = pv_all.P_kw_nf[n_0:n_end]
     pv.datetime = pv_all.datetime[n_0:n_end]
 
-    if debug_indexing:
-        print('PV')
-        print('n_0={:d}'.format(n_0) + ' n_end={:d}'.format(n_end))
-        print(pv.datetime[0])
-        print(pv.datetime[-1])
-        print(pv.P_kw_nf.size)
-        print(len(pv.datetime))
-        print('')
-
-    # check indexing
-    # beginning and ending date and hour should match between load and pv
-    if (load.datetime[0].day    - pv.datetime[0].day):
-        err.indexing()
-    if (load.datetime[-1].day   - pv.datetime[-1].day):
-        err.indexing()
-    if (load.datetime[0].hour   - pv.datetime[0].hour):
-        err.indexing()
-    if (load.datetime[-1].hour  - pv.datetime[-1].hour):
-        err.indexing()
-
+    check_indexing()
 
     #
     # Algorithm
@@ -1238,15 +1366,6 @@ def simulate_utility_on(t_0,L):
     load.P_kw_nf = load_all.P_kw_nf[m_0:m_end]
     load.datetime = load_all.datetime[m_0:m_end]
 
-    if debug_indexing:
-        print('LOAD')
-        print('m_0={:d}'.format(m_0) + ' m_end={:d}'.format(m_end))
-        print(load.datetime[0])
-        print(load.datetime[-1])
-        print(load.P_kw_nf.size)
-        print(len(load.datetime))
-        print('')
-
     # temporarily store small chunk "all pv" vector in "pv"
     if solar_data_inverval_15min:
         n_0 = t_0 + pv_all.offset
@@ -1263,28 +1382,7 @@ def simulate_utility_on(t_0,L):
     pv.P_kw_nf = pv_all.P_kw_nf[n_0:n_end]
     pv.datetime = pv_all.datetime[n_0:n_end]
 
-    if debug_indexing:
-        print('PV')
-        print('n_0={:d}'.format(n_0) + ' n_end={:d}'.format(n_end))
-        print(pv.datetime[0])
-        print(pv.datetime[-1])
-        print(pv.P_kw_nf.size)
-        print(len(pv.datetime))
-        print('')
-
-    # check indexing
-    # beginning and ending date and hour should match between load and pv
-    if (load.datetime[0].day    - pv.datetime[0].day):
-        err.indexing()
-    if (load.datetime[-1].day   - pv.datetime[-1].day):
-        err.indexing()
-    if (load.datetime[0].hour   - pv.datetime[0].hour):
-        err.indexing()
-    if (load.datetime[-1].hour  - pv.datetime[-1].hour):
-        err.indexing()
-
-
-
+    check_indexing()
 
     #
     # Algorithm
@@ -1307,7 +1405,7 @@ def simulate_utility_on(t_0,L):
             gpower = grid.power_request(i, LSBimbalance)
 
         # peak shaving with charging batt from grid during certain hours
-        elif peak_shaving and grid_charging and charging_period:
+        elif peak_shaving and grid_charging and batt_grid_charging_period:
             demand_target = demand_targets.get(i)
             if LSimbalance < 0: # don't spill extra solar
                 battpower = bat.power_request(i,LSimbalance)
@@ -1440,9 +1538,8 @@ def simulate_utility_on(t_0,L):
                 val3 = results.errors[i][j]
                 print('{:.1f}       {:.1f}      {:.1f}'.format(val1,val2,val3))
 
-    # print checksum
-    if debug:
-        print('\ndebug checksum: {:.3f}'.format(np.sum(bat.P_kw_nf)))
+    # checksum
+    if debug: print('\nchecksum (sum bat.P): {:.3f}'.format(np.sum(bat.P_kw_nf)))
 
 #
 # Simulate entech (utility on)
@@ -1450,6 +1547,7 @@ def simulate_utility_on(t_0,L):
 
 def simulate_entech(m_0,L):
 
+    # assume pv is 15-min interval
     m_end = m_0 + L
     n_0 = m_0
     n_end = n_0 + L
@@ -1472,12 +1570,7 @@ def simulate_entech(m_0,L):
     pv.Pdisp =      np.copy(pv_all.Pdisp[n_0:n_end])
     pv.datetime =   np.copy(pv_all.datetime[n_0:n_end])
 
-    # check indexing
-    # (beginning and ending date and hour should match between load and pv)
-    if (load1.datetime[0].day    - pv.datetime[0].day):      err.indexing()
-    if (load1.datetime[-1].day   - pv.datetime[-1].day):     err.indexing()
-    if (load1.datetime[0].hour   - pv.datetime[0].hour):     err.indexing()
-    if (load1.datetime[-1].hour  - pv.datetime[-1].hour):    err.indexing()
+    check_indexing()
 
     #
     # Algorithm
@@ -1878,7 +1971,7 @@ hard_code_superloop = 0
 peak_shaving = 0
 grid_online = 0
 grid_charging = 0
-charging_period = False
+batt_grid_charging_period = False
 batt_daytime_gen_chg = False
 entech = 0
 PS_arb_thresh = 0.4
@@ -1888,6 +1981,7 @@ L = days*24*4                     # length of simulation in timesteps
 vary_soc0 = False
 weekend_arb_off = 0
 Xh = 168    # option to choose the length of time to calculate confidence interval
+testing = False
 
 # physical capacities
 batt_power = 0.         # kw
@@ -1922,6 +2016,14 @@ if len(sys.argv) > 1:
 
         if sys.argv[i] == '-s':
             site = str(sys.argv[i+1])
+            if len(sys.argv) > 2:
+                if sys.argv[i+2][0] != '-':
+                    sim = str(sys.argv[i+2])
+                    configure_sim(sim)
+
+        elif sys.argv[i] == '-sim':
+            sim = str(sys.argv[i+1])
+            configure_sim(sim)           
 
         elif sys.argv[i] == '-p':
             pv_scaling_factor = float(sys.argv[i+1])
@@ -1931,6 +2033,10 @@ if len(sys.argv) > 1:
 
         elif sys.argv[i] == '-r':
             runs = int(sys.argv[i+1])
+
+        elif sys.argv[i] == '-b':
+            batt_power = float(sys.argv[i+1])
+            batt_energy = float(sys.argv[i+2])    
 
         elif sys.argv[i] == '-bp':
             batt_power = float(sys.argv[i+1])
@@ -1950,14 +2056,18 @@ if len(sys.argv) > 1:
             dod = float(sys.argv[i+1])
             batt_energy = batt_energy * dod
 
-        elif sys.argv[i] == '-vs':
+        elif sys.argv[i] == '-bvs':
             vary_soc0 = True
 
         elif sys.argv[i] == '-bdg':
             batt_daytime_gen_chg = True
 
         elif sys.argv[i] == '-bcp':
-            charging_period = True
+            batt_grid_charging_period = True
+
+        elif sys.argv[i] == '-g':
+            gen_power = float(sys.argv[i+1])
+            gen_tank = float(sys.argv[i+2])
 
         elif sys.argv[i] == '-gp':
             gen_power = float(sys.argv[i+1])
@@ -1967,65 +2077,6 @@ if len(sys.argv) > 1:
 
         elif sys.argv[i] == '-gfp':
             gen_fuel_propane = 1
-
-        elif sys.argv[i] == '-sim':
-            sim = str(sys.argv[i+1])
-            if sim == 'r':
-                grid_online = 0
-                simulation_interval = 3
-                runs = 365*24//simulation_interval   # number of iterations
-                days = 14                          # length of grid outage
-                L = days*24*4                     # length of simulation in timesteps
-                output_resilience = 1
-
-            elif sim == 'rmg':
-                gen1_power = float(sys.argv[i+2])
-                gen1_tank = float(sys.argv[i+3])
-                gen2_power = float(sys.argv[i+4])
-                gen2_tank = float(sys.argv[i+5])
-                grid_online = 0
-                simulation_interval = 3
-                runs = 365*24//simulation_interval   # number of iterations
-                days = 14                          # length of grid outage
-                L = days*24*4                     # length of simulation in timesteps
-                output_resilience = 1
-
-            elif sim == 'ua':
-                grid_online = 1
-                #grid_charging = 1
-                gen_power = 0
-                simulation_interval = 8760
-                runs = 1
-                days = 365
-                L = days*24*4                     # length of simulation in timesteps
-                output_vectors = 1
-
-            elif sim == 'up':
-                grid_online = 1
-                grid_charging = 1
-                gen_power = 0
-                simulation_interval = 8760
-                runs = 1
-                days = 365
-                L = days*24*4                     # length of simulation in timesteps
-                peak_shaving = 1
-                output_vectors = 1
-
-            elif sim == 'ue':
-                grid_online = 1
-                grid_charging = 1
-                entech = 1
-                gen_power = 0
-                simulation_interval = 8760
-                runs = 1
-                days = 365
-                L = days*24*4                     # length of simulation in timesteps
-                peak_shaving = 1
-                output_vectors = 1
-
-            else:
-                print('\033[1;31;1m fatality: no simulation type selected')
-                quit()
 
         elif sys.argv[i] == '-c': # length of time for confidence interval calc
             Xh = int(sys.argv[i+1])
@@ -2116,17 +2167,10 @@ if len(sys.argv) > 1:
         elif sys.argv[i] == '-opi':
             old_profile_import = True
 
-        elif sys.argv[i] == '--test':
-            site = 'mugrid_test'
-            debug = 1
-            debug_energy = 1
-            batt_power = 2.         # kw
-            batt_energy = 10.       # kwh
-            gen_power = 2.           # kw
-            gen_tank = 10.          # gal
-            runs = 1
-            days = 3
-            L = days*24*4           # length of simulation in timesteps
+        elif sys.argv[i] == '--test':            
+            test = sys.argv[i+1]
+            sim = sys.argv[i+2]
+            configure_test(test,sim)          
 
         elif sys.argv[i] == '--help' :
             help_printout()
@@ -2297,7 +2341,7 @@ for load_scaling_factor in load_scale_vector:
                             simulate_utility_on(t0,L)
                         else:
                             print('\033[1;31;1m fatality: no dispatch type selected')
-                            quit()
+                            quit()              
 
                     # keep track of asset sizes and pv scaling
                     batt_energy_vals.append(batt_energy)
@@ -2323,6 +2367,15 @@ for load_scaling_factor in load_scale_vector:
                         print('TTFF [h]: max={} avg={} min={}'.format(max_ttff,avg_ttff,min_ttff))
                         print('Confidence: 72h={} 336h={} {}h={}'.format(conf_72h,conf_336h,Xh,conf_Xh))
 
+                    if testing and site == 'badriver_clinic':
+                        batsum = np.sum(bat.P_kw_nf)
+                        if sim == 'ua': result = isclose(-42048.255,batsum,rel_tol=1e-6)
+                        elif sim == 'up': result = isclose(-20871.287,batsum,rel_tol=1e-6)
+                        elif sim == 'r': 
+                            result = isclose(0.717123,conf_336h[0],rel_tol=1e-6)                                                                                  
+                            print('\nchecksum (336h conf): {:.6f}'.format(conf_336h[0]))
+                        print('\ntest checksum is close: {}'.format(result))    
+                     
                     if output_resilience: output_resilience_results(sim)
 
 
