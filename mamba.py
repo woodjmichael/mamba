@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "7.0"
+__version__ = "7.1"
 
 #
 # Versions
 #
 
+#   7.1 - output files contain load/solar profile notes, functionalize more code, some minor housekeeping, testing no output, turn off fuel curve calc error
 # 7.0 - add mambavis.py, --test automatic testing, new -b -g args and -s modified, python 3.8 
 #   6.23 - minor peak shaving change in case of extra solar
 #   6.22 -  integrate 6.21 and 6.21.1: peak shaving with la jolla custom charging window (12-6am), batt efficiency arg
@@ -115,7 +116,7 @@ from math import isclose
 ################################################################################
 
 #
-# Load and Solar Data (inputs)
+# Load and Solar Inputs
 #
 
 class DataClass:
@@ -129,6 +130,7 @@ class DataClass:
         me.soc_nf = np.zeros((length,), dtype=float) # [h]
         me.code_runtime_s = 0
         me.version = 0
+        me.note = ''
 
     def clear(me):
         me.datetime = []
@@ -196,7 +198,7 @@ class GenClass:
             power = 0
         if power < 0: # fun fact, the power calc can come out negative
             power = 0
-            err.fuel_curve_calc()
+            #err.fuel_curve_calc()
         return power
 
     def fuel_calc(me, i, power):
@@ -502,28 +504,30 @@ class FaultClass:
         me.fuelCurveCoeffs = 0
         me.fuelCurveCalc = 0
         me.dispatch = 0
+        me.cs = 0
 
-    def print_faults(me):
-
-        #print("\033[1;31;40m Bright Green  \n")
-        if err.mainloop:
+    def print_faults(me):        
+        if me.mainloop:
             print('')
             print('\033[1;31;1m error main loop (qty {:d})'.format(err.mainloop))
-        if err.energybalance:
+        if me.energybalance:
             print('')
             print('\033[1;31;1m error energy balance (qty {:d})'.format(err.energybalance))
-        if err.index:
+        if me.index:
             print('')
             print('\033[1;31;1m error indexing (qty {:d})'.format(err.index))
-        if err.fuelCurveCoeffs:
+        if me.fuelCurveCoeffs:
             print('')
             print('\033[1;31;1m error fuel curve coeffs (qty {:d})'.format(err.fuelCurveCoeffs))
-        if err.dispatch:
+        if me.dispatch:
             print('')
             print('\033[1;31;1m error with dispatch (qty {:d})'.format(err.dispatch))
-        if err.fuelCurveCalc:
+        if me.fuelCurveCalc:
             print('')
             print('\033[1;31;1m error with fuel curve calculation (qty {:d})'.format(err.fuelCurveCalc))
+        if me.cs:
+            print('')
+            print('\033[1;31;1m error on testing checksum (qty {:d})'.format(err.cs))            
 
     def main_loop(me):
         me.mainloop += 1
@@ -542,6 +546,9 @@ class FaultClass:
 
     def fuel_curve_calc(me):
         me.fuelCurveCalc += 1
+
+    def checksum(me):
+        me.cs += 1
 
 
 ################################################################################
@@ -590,6 +597,11 @@ def help_printout():
     print('Debug (see code):        --debug [ | type]           e.g. --debug res    default=OFF')
     print('')
 
+def check_python_version(ver):
+    if sys.version_info < ver:
+        print('error! python version less than 3.7')
+        quit()
+
 
 #
 # check indexing and maybe print debug
@@ -622,7 +634,11 @@ def check_indexing():
         print(pv.datetime[-1])
         print(pv.P_kw_nf.size)
         print(len(pv.datetime))
-        print('')      
+        print('')   
+
+#
+# configure simulation
+#            
 
 def configure_sim(sim):
     global grid_online, gen_power, simulation_interval, runs, days, L, output_vectors
@@ -685,8 +701,11 @@ def configure_sim(sim):
 
     else:
         print('\033[1;31;1m fatality: no simulation type selected')
-        quit()   
+        quit() 
 
+#
+# configure testing
+#          
 def configure_test(test,sim):
     global grid_online, gen_power, simulation_interval, runs, days, L, output_vectors
     global output_resilience
@@ -760,10 +779,21 @@ def configure_test(test,sim):
             simulation_interval = 3
             runs = 365*24//simulation_interval   # number of iterations
             days = 14                          # length of grid outage
-            L = days*24*4                     # length of simulation in timesteps
-            output_resilience = 1         
+            L = days*24*4                     # length of simulation in timesteps  
 
+#
+# create output directory
+# 
+def create_output_directory(site):
+    global output_dir
+    now = dt.datetime.now().strftime("%Y_%m_%d__%H_%M_%S")
+    outdir = output_dir + site + '__' + str(now)
+    if not os.path.exists(outdir):
+        os.mkdir(outdir)
+    else:
+        print('error: output directory already exists')
 
+    return outdir
 
 
 #
@@ -848,6 +878,9 @@ def import_load_data(site, load_stats):
         print('min load [kw] = {:.1f}'.format(np.amin(load_all.P_kw_nf)))
         print('stdev load [kw] = {:.1f}'.format(np.std(load_all.P_kw_nf)))
 
+#
+# import load data (entech only)
+#
 def import_load_data_ue(site, load_stats):
 
     # 1. elderly center
@@ -923,6 +956,7 @@ def import_load_data_vc(site, load_stats=False):
         i=0
         for line in datacsv:
             if i==0: load_all.version = int(line[-1])
+            if (line[0] == 'Note'): load_all.note = line[load_all.version]
             if (line[0] == '1') or (i>15): break
             i += 1
 
@@ -1007,8 +1041,9 @@ def import_pv_data_vc(site):
         i=0
         for line in datacsv:
             if i==0: pv_all.version = int(line[-1])
+            if (line[0] == 'Note'): pv_all.note = line[pv_all.version]
             if (line[0] == '1') or (i>15): break
-            i += 1
+            i += 1            
 
     pv_all.P_kw_nf = np.zeros((35040,), dtype=float)
 
@@ -1048,13 +1083,6 @@ def import_soc_vc(site):
 
     dispatch_previous.soc_nf = np.concatenate((md,md),axis=0) # wrap around new years
 
-
-
-#
-# Import demand target values and the Time of Use schedule
-#
-
-def import_demand_targets(site):
     print ('broken!')
     quit()
 
@@ -1584,9 +1612,6 @@ def simulate_entech(m_0,L):
 
     for i in range(L):
 
-
-
-
         # arbitrage
         if 0:#bat.soc_prev >= 0:
 
@@ -1793,7 +1818,9 @@ def output_resilience_results(sim):
         output.writerow(['# Site:',site])
         output.writerow(['# mamba.py ver:',__version__])
         output.writerow(['# Load profile ver:',load_all.version])
+        output.writerow(['# Load profile note:',load_all.note])
         output.writerow(['# Solar profile ver:',pv_all.version])
+        output.writerow(['# Solar profile note:',pv_all.note])
         output.writerow(['# Datetime:',dt.datetime.now()])
         output.writerow(['# Runtime [s]:',results.code_runtime_s])
         output.writerow(['# Simulated outage duration [days]:',days])
@@ -1819,12 +1846,12 @@ def output_resilience_results(sim):
             output.writerow(['# Fuel curve A coefficient [gal/h/kW]:',gen_fuelA])
             output.writerow(['# Fuel curve B coefficient [gal/h]:',gen_fuelB])
         if not superloop_enabled:
-            output.writerow(['# Confidence 72 h:',conf_72h])
-            output.writerow(['# Confidence 336 h:',conf_336h])
-            output.writerow(['# Confidence {} h:'.format(Xh),conf_Xh])
-            output.writerow(['# Max TTFF [h]:', max_ttff])
-            output.writerow(['# Avg TTFF [h]:', avg_ttff])
-            output.writerow(['# Min TTFF [h]:', min_ttff])
+            output.writerow(['# Confidence 72 h:',conf_72h[0]])
+            output.writerow(['# Confidence 336 h:',conf_336h[0]])
+            output.writerow(['# Confidence {} h:'.format(Xh),conf_Xh[0]])
+            output.writerow(['# Max TTFF [h]:', max_ttff[0]])
+            output.writerow(['# Avg TTFF [h]:', avg_ttff[0]])
+            output.writerow(['# Min TTFF [h]:', min_ttff[0]])
         output.writerow(['Outage','Outage Start', 'Time to First Failure [h]', 'Cumulative Operating Time [h]'])
         for i in range(runs):
             output.writerow([i+1,results.datetime[i],results.time_to_grid_import_h_nf[i],results.onlineTime_h_ni[i]])
@@ -1839,7 +1866,9 @@ def output_dispatch_vectors(sim):
         output.writerow(['# Site:',site])
         output.writerow(['# mamba.py ver:',__version__])
         output.writerow(['# Load profile ver:',load_all.version])
+        output.writerow(['# Load profile note:',load_all.note])
         output.writerow(['# Solar profile ver:',pv_all.version])
+        output.writerow(['# Solar profile note:',pv_all.note])
         output.writerow(['# Datetime:',dt.datetime.now()])
         output.writerow(['# Runtime [s]:',results.code_runtime_s])
         output.writerow(['# Simulated outage duration [days]:',days])
@@ -1909,7 +1938,9 @@ def output_superloop_results(sim):
         output.writerow(['# Site:',site])
         output.writerow(['# mamba.py ver:',__version__])
         output.writerow(['# Load profile ver:',load_all.version])
+        output.writerow(['# Load profile note:',load_all.note])
         output.writerow(['# Solar profile ver:',pv_all.version])
+        output.writerow(['# Solar profile note:',pv_all.note])
         output.writerow(['# Datetime:',dt.datetime.now()])
         output.writerow(['# Runtime [s]:',results.code_runtime_s])
         output.writerow(['# Simulated outage duration [days]:',days])
@@ -1933,23 +1964,346 @@ def output_superloop_results(sim):
         for i in range(len(max_ttff)):
             output.writerow([load_scale_vals[i],pv_scale_vals[i],batt_power_vals[i], batt_energy_vals[i], batt_hrs_vals[i], gen_power_vals[i], conf_72h[i],conf_336h[i],conf_Xh[i],min_ttff[i],avg_ttff[i],max_ttff[i]])
 
-    return None # so github 'compare' knows the function stops
+#
+# output test results
+#
+def print_test_results(site):
+    if site == 'badriver_clinic':
+        batsum = np.sum(bat.P_kw_nf)
+        if sim == 'ua':     
+            ok = isclose(-42048.255, batsum, rel_tol=1e-6)                        
+        elif sim == 'up':   
+            ok = isclose(-20871.287, batsum, rel_tol=1e-6)
+        elif sim == 'r': 
+            ok = isclose(0.717123,conf_336h[0],rel_tol=1e-6)                                                                                  
+            print('\nchecksum (336h conf): {:.6f}'.format(conf_336h[0]))
+        print('\ntest checksum is close: {}'.format(ok))
+        if not ok: err.checksum()  
 
+
+#
+# plots           
+#
+def plots(sim):
+    if sim == 'ue':
+
+
+        #
+        # 1
+        #
+
+        fig1, ax1 = plt.subplots(figsize=(20,8))
+        ax2 = ax1.twinx()
+
+        # main vectors
+        t = np.arange(1., L+1., 1.)
+        p = pv.P_kw_nf
+        l1 = load1.P_kw_nf
+        #l2 = load2.P_kw_nf
+        #l3 = load3.P_kw_nf
+        g = gen.P_kw_nf
+        d = np.clip(bat.P_kw_nf,0,10000)
+        c = -1*np.clip(bat.P_kw_nf,-10000,0)
+        G1 = np.clip(grid1.P_kw_nf,0,10000)
+
+        # consider putting in a horizontal demand target line
+        if peak_shaving:# and debug_demand:
+            m1 = load1.datetime[i].month
+            ax1.plot([1, L], [demand_target_1, demand_target_1], 'r', label='demand target', linewidth=.5)
+
+        # plot load and soc
+        ax1.plot(t, l1,           'k',    label='load1', linewidth=0.5)
+        ax1.plot(t, l1+c,         'k--',  label='load1 + batt charge', linewidth=0.5)
+        ax2.plot(t, bat.soc_nf,  'b:',   label='soc', linewidth=0.5)
+
+        # area plots
+        if plot_pv_first and grid_online:
+            ax1.plot(t, G1,       'r--',  label='grid import',linewidth=1.)
+            ax1.fill_between(t, 0,      p,     facecolor='lightyellow', label='pv')#, interpolate=True)
+            ax1.fill_between(t, p,      p+d,   facecolor='lightblue',   label='batt discharge')#, interpolate=True)
+            ax1.fill_between(t, p+d,    p+d+G1, facecolor='pink',        label='grid1')#, interpolate=True)
+
+        # area plots
+        elif plot_pv_first and not grid_online:
+            ax1.fill_between(t, 0,      p,          facecolor='lightyellow', label='pv')#, interpolate=True)
+            ax1.fill_between(t, p,      p+d,        facecolor='lightblue',  label='batt discharge')#, interpolate=True)
+            ax1.fill_between(t, p+d,    p+d+g,      facecolor='lightgreen', label='gen')#, interpolate=True)
+
+        # area plots
+        elif plot_grid_first and grid_online:
+            ax1.fill_between(t, 0,       G1,     facecolor='pink', label='grid')#, interpolate=True)
+            ax1.fill_between(t, G1,       G1+p,   facecolor='lightyellow', label='pv')#, interpolate=True)
+            ax1.fill_between(t, G1+p,     G1+p+d, facecolor='lightblue', label='batt discharge')#, interpolate=True)
+
+        ax1.set_xlabel('timestep')
+        ax1.set_ylabel('power [kW]')
+        ax2.set_ylabel('SOC')
+
+        ax1.set_title('elderly center')
+        ax1.legend(loc='upper left')
+        ax2.legend(loc='upper right')
+        ax1.set_xlim(1,L)
+        ax1.set_ylim(0,1.1*np.max([p,l1,g,d,c,G1]))
+        ax2.set_ylim(0,1.1)
+
+        #
+        # 2
+        #
+
+        fig2, ax1 = plt.subplots(figsize=(20,8))
+        ax2 = ax1.twinx()
+
+        # main vectors
+        t = np.arange(1., L+1., 1.)
+        p = pv.P_kw_nf
+        l2 = load2.P_kw_nf
+        g = gen.P_kw_nf
+        d = np.clip(bat.P_kw_nf,0,10000)
+        c = -1*np.clip(bat.P_kw_nf,-10000,0)
+        G2 = np.clip(grid2.P_kw_nf,0,10000)
+
+        # consider putting in a horizontal demand target line
+        if peak_shaving:# and debug_demand:
+            m2 = load2.datetime[i].month
+            ax1.plot([1, L], [demand_target_2, demand_target_2], 'r', label='demand target', linewidth=.5)
+
+        # plot load and soc
+        ax1.plot(t, l2,           'k',    label='load2', linewidth=0.5)
+        ax1.plot(t, l2+c,         'k--',  label='load2 + batt charge', linewidth=0.5)
+        ax2.plot(t, bat.soc_nf,  'b:',   label='soc', linewidth=0.5)
+
+        # area plots
+        if plot_pv_first and grid_online:
+            ax1.plot(t, G2,       'r--',  label='grid2 import',linewidth=1.)
+            ax1.fill_between(t, 0,      p,     facecolor='lightyellow', label='pv')#, interpolate=True)
+            ax1.fill_between(t, p,      p+d,   facecolor='lightblue',   label='batt discharge')#, interpolate=True)
+            ax1.fill_between(t, p+d,    p+d+G2, facecolor='pink',        label='grid2')#, interpolate=True)
+
+        # area plots
+        elif plot_pv_first and not grid_online:
+            ax1.fill_between(t, 0,      p,          facecolor='lightyellow', label='pv')#, interpolate=True)
+            ax1.fill_between(t, p,      p+d,        facecolor='lightblue',  label='batt discharge')#, interpolate=True)
+            ax1.fill_between(t, p+d,    p+d+g,      facecolor='lightgreen', label='gen')#, interpolate=True)
+
+        # area plots
+        elif plot_grid_first and grid_online:
+            ax1.fill_between(t, 0,       G2,     facecolor='pink', label='grid2')#, interpolate=True)
+            ax1.fill_between(t, G2,       G2+p,   facecolor='lightyellow', label='pv')#, interpolate=True)
+            ax1.fill_between(t, G2+p,     G2+p+d, facecolor='lightblue', label='batt discharge')#, interpolate=True)
+
+        ax1.set_xlabel('timestep')
+        ax1.set_ylabel('power [kW]')
+        ax2.set_ylabel('SOC')
+
+        ax1.set_title('head start')
+        ax1.legend(loc='upper left')
+        ax2.legend(loc='upper right')
+        ax1.set_xlim(1,L)
+        ax1.set_ylim(0,1.1*np.max([p,l2,g,d,c,G2]))
+        ax2.set_ylim(0,1.1)
+
+
+        #
+        # 3
+        #
+
+        fig2, ax1 = plt.subplots(figsize=(20,8))
+        ax2 = ax1.twinx()
+
+        # main vectors
+        t = np.arange(1., L+1., 1.)
+        p = pv.P_kw_nf
+        l3 = load3.P_kw_nf
+        g = gen.P_kw_nf
+        d = np.clip(bat.P_kw_nf,0,10000)
+        c = -1*np.clip(bat.P_kw_nf,-10000,0)
+        G3 = np.clip(grid3.P_kw_nf,0,10000)
+
+        # consider putting in a horizontal demand target line
+        if peak_shaving:# and debug_demand:
+            m3 = load3.datetime[i].month
+            ax1.plot([1, L], [demand_target_3, demand_target_3], 'r', label='demand target', linewidth=.5)
+
+        # plot load and soc
+        ax1.plot(t, l3,           'k',    label='load3', linewidth=0.5)
+        ax1.plot(t, l3+c,         'k--',  label='load3 + batt charge', linewidth=0.5)
+        ax2.plot(t, bat.soc_nf,  'b:',   label='soc', linewidth=0.5)
+
+        # area plots
+        if plot_pv_first and grid_online:
+            ax1.plot(t, G3,       'r--',  label='grid3 import',linewidth=1.)
+            ax1.fill_between(t, 0,      p,     facecolor='lightyellow', label='pv')#, interpolate=True)
+            ax1.fill_between(t, p,      p+d,   facecolor='lightblue',   label='batt discharge')#, interpolate=True)
+            ax1.fill_between(t, p+d,    p+d+G3, facecolor='pink',        label='grid3')#, interpolate=True)
+
+        # area plots
+        elif plot_pv_first and not grid_online:
+            ax1.fill_between(t, 0,      p,          facecolor='lightyellow', label='pv')#, interpolate=True)
+            ax1.fill_between(t, p,      p+d,        facecolor='lightblue',  label='batt discharge')#, interpolate=True)
+            ax1.fill_between(t, p+d,    p+d+g,      facecolor='lightgreen', label='gen')#, interpolate=True)
+
+        # area plots
+        elif plot_grid_first and grid_online:
+            ax1.fill_between(t, 0,       G3,     facecolor='pink', label='grid3')#, interpolate=True)
+            ax1.fill_between(t, G3,       G2+p,   facecolor='lightyellow', label='pv')#, interpolate=True)
+            ax1.fill_between(t, G3+p,     G3+p+d, facecolor='lightblue', label='batt discharge')#, interpolate=True)
+
+        ax1.set_xlabel('timestep')
+        ax1.set_ylabel('power [kW]')
+        ax2.set_ylabel('SOC')
+
+        ax1.set_title('health clinic')
+        ax1.legend(loc='upper left')
+        ax2.legend(loc='upper right')
+        ax1.set_xlim(1,L)
+        ax1.set_ylim(0,1.1*np.max([p,l3,g,d,c,G3]))
+        ax2.set_ylim(0,1.1)
+
+        plt.show()    
+    elif sim == 'rmg':
+        #plt.style.use('dark_background')
+        #plt.rcParams['axes.prop_cycle']
+
+        # plot type
+        fig, ax1 = plt.subplots(figsize=(20,8.5))
+        ax2 = ax1.twinx()
+
+        # main vectors
+        t = np.arange(1., L+1., 1.)
+        p = pv.P_kw_nf
+        l = load.P_kw_nf
+        g1 = gen1.P_kw_nf
+        g2 = gen2.P_kw_nf
+        d = np.clip(bat.P_kw_nf,0,10000)
+        c = -1*np.clip(bat.P_kw_nf,-10000,0)
+        u = np.clip(grid.P_kw_nf,0,10000)
+
+        # consider putting in a horizontal demand target line
+        if peak_shaving:# and debug_demand:
+            m = load.datetime[i].month
+            ax1.plot([1, L], [demand_targets.monthly[m-1], demand_targets.monthly[m-1]], 'r', label='demand target', linewidth=.5)
+
+        # plot load and soc
+        ax1.plot(t, l,           'k',    label='load', linewidth=0.5)
+        ax1.plot(t, l+c,         'k--',  label='load + batt charge', linewidth=0.5)
+        ax2.plot(t, bat.soc_nf,  'b:',   label='soc', linewidth=0.5)
+
+        # area plots
+        if plot_pv_first and grid_online:
+            ax1.plot(t, u,       'r--',  label='grid import',linewidth=1.)
+            ax1.fill_between(t, 0,      p,     facecolor='lightyellow', label='pv')#, interpolate=True)
+            ax1.fill_between(t, p,      p+d,   facecolor='lightblue',   label='batt discharge')#, interpolate=True)
+            ax1.fill_between(t, p+d,    p+d+u, facecolor='pink',        label='grid')#, interpolate=True)
+
+        # area plots
+        elif plot_pv_first and not grid_online:
+            ax1.fill_between(t, 0,      p,          facecolor='lightyellow', label='pv')#, interpolate=True)
+            ax1.fill_between(t, p,      p+d,        facecolor='lightblue',  label='batt discharge')#, interpolate=True)
+            ax1.fill_between(t, p+d,    p+d+g1,     facecolor='lightgreen', label='gen1')#, interpolate=True)
+            ax1.fill_between(t, p+d+g1, p+d+g1+g2,  facecolor='green', label='gen2')#, interpolate=True)
+
+        # area plots
+        elif plot_grid_first and grid_online:
+            ax1.fill_between(t, 0,       u,     facecolor='pink', label='grid')#, interpolate=True)
+            ax1.fill_between(t, u,       u+p,   facecolor='lightyellow', label='pv')#, interpolate=True)
+            ax1.fill_between(t, u+p,     u+p+d, facecolor='lightblue', label='batt discharge')#, interpolate=True)
+
+        ax1.set_xlabel('timestep')
+        ax1.set_ylabel('power [kW]')
+        ax2.set_ylabel('SOC')
+
+        ax1.legend(loc='upper left')
+        ax2.legend(loc='upper right')
+        ax1.set_xlim(1,L)
+        ax1.set_ylim(0,1.1*np.max([l+c]))
+        ax2.set_ylim(0,1.1)
+
+        #fig.tight_layout()
+        plt.show()
+    else:
+        #plt.style.use('dark_background')
+        #plt.rcParams['axes.prop_cycle']
+
+        # plot type
+        fig, ax1 = plt.subplots(figsize=(20,8.5))
+        ax2 = ax1.twinx()
+
+        # main vectors
+        t = np.arange(1., L+1., 1.)
+        p = pv.P_kw_nf
+        l = load.P_kw_nf
+        g = gen.P_kw_nf
+        d = np.clip(bat.P_kw_nf,0,10000)
+        c = -1*np.clip(bat.P_kw_nf,-10000,0)
+        u = np.clip(grid.P_kw_nf,0,10000)
+
+        # consider putting in a horizontal demand target line
+        if peak_shaving:# and debug_demand:
+            m = load.datetime[i].month
+            ax1.plot([1, L], [demand_targets.monthly[m-1], demand_targets.monthly[m-1]], 'r', label='demand target', linewidth=.5)
+
+        # plot load and soc
+        ax1.plot(t, l,           'k',    label='load', linewidth=0.5)
+        ax1.plot(t, l+c,         'k--',  label='load + batt charge', linewidth=0.5)
+        ax2.plot(t, bat.soc_nf,  'b:',   label='soc', linewidth=0.5)
+
+        # area plots
+        if plot_pv_first and grid_online:
+            ax1.plot(t, u,       'r--',  label='grid import',linewidth=1.)
+            ax1.fill_between(t, 0,      p,     facecolor='lightyellow', label='pv')#, interpolate=True)
+            ax1.fill_between(t, p,      p+d,   facecolor='lightblue',   label='batt discharge')#, interpolate=True)
+            ax1.fill_between(t, p+d,    p+d+u, facecolor='pink',        label='grid')#, interpolate=True)
+
+        # area plots
+        elif plot_pv_first and not grid_online:
+            ax1.fill_between(t, 0,      p,          facecolor='lightyellow', label='pv')#, interpolate=True)
+            ax1.fill_between(t, p,      p+d,        facecolor='lightblue',  label='batt discharge')#, interpolate=True)
+            ax1.fill_between(t, p+d,    p+d+g,      facecolor='lightgreen', label='gen')#, interpolate=True)
+
+        # area plots
+        elif plot_grid_first and grid_online:
+            ax1.fill_between(t, 0,       u,     facecolor='pink', label='grid')#, interpolate=True)
+            ax1.fill_between(t, u,       u+p,   facecolor='lightyellow', label='pv')#, interpolate=True)
+            ax1.fill_between(t, u+p,     u+p+d, facecolor='lightblue', label='batt discharge')#, interpolate=True)
+
+        ax1.set_xlabel('timestep')
+        ax1.set_ylabel('power [kW]')
+        ax2.set_ylabel('SOC')
+
+        ax1.legend(loc='upper left')
+        ax2.legend(loc='upper right')
+        ax1.set_xlim(1,L)
+        ax1.set_ylim(0,1.1*np.max([p,l,g,d,c,u]))
+        ax2.set_ylim(0,1.1)
+
+        #fig.tight_layout()
+        plt.show()
+
+        # if debug_demand:
+        #     plt.plot(load.datetime,grid.P_kw_nf)
+        #     plt.show()
+
+def notify_script_finished():
+    if not grid_online and not plots_on and not debug:
+
+        if platform.system() == 'Darwin':   # macos
+            os.system('say "Ding! Resilient fries are done"')
+        else:
+            sys.stdout.write('\a') # beep
+
+    return None # so github 'compare' knows the function stops            
+
+        
 
 ################################################################################
 #
-# Main
+# Main Execution
 #
 ################################################################################
 
-if sys.version_info < (3,7):
-    print('error! python version less than 3.7')
-    quit()
-
+check_python_version(ver=(3,7))
 t_script_begin_dt = dt.datetime.now()
-
 err =   FaultClass()
-
 
 #
 # Run options
@@ -1998,6 +2352,7 @@ gen1_fuel_propane, gen2_fuel_propane = 0, 0
 calc_energy_from_hrs = 0  # batt power such that capacity = 1h
 
 # outputs on/off
+output_dir = './Data/Output/'
 output_resilience = 0
 output_vectors = 0
 plots_on = 0
@@ -2009,14 +2364,19 @@ debug_indexing = 0
 debug_res = 0
 batt_vector_print = 0
 
-# command line run options override defaults
+#
+# Program Arguments
+#
+
+# program arguments override defaults
+# later program arguments override earlier ones
 if len(sys.argv) > 1:
 
     for i in range(1, len(sys.argv)):
 
         if sys.argv[i] == '-s':
             site = str(sys.argv[i+1])
-            if len(sys.argv) > 2:
+            if len(sys.argv) > 2:           # make sure there are more args
                 if sys.argv[i+2][0] != '-':
                     sim = str(sys.argv[i+2])
                     configure_sim(sim)
@@ -2095,10 +2455,10 @@ if len(sys.argv) > 1:
             plot_pv_first = 1
             plot_grid_first = 0
 
-            if i+1 < len(sys.argv):         # make sure there are more args
-                type = str(sys.argv[i+1])
+            if len(sys.argv) > i+1:         # make sure there are more args
+                plot_type = str(sys.argv[i+1])
 
-                if type == 'u':
+                if plot_type == 'u':
                     plot_pv_first = 0
                     plot_grid_first = 1
 
@@ -2106,24 +2466,14 @@ if len(sys.argv) > 1:
             load_stats = True
 
         elif sys.argv[i] == '--debug':
-
             debug = 1                       # basic debug only
             __version__ = __version__ + '_debug'
-
             if i+1 < len(sys.argv):         # make sure there are more args
-                bug = str(sys.argv[i+1])
-
-                if bug == 'energy':
-                    debug_energy = 1
-
-                elif bug == 'demand':
-                    debug_demand = 1
-
-                elif bug == 'indexing':
-                    debug_indexing = 1
-
-                elif bug == 'res':
-                    debug_res = 1
+                deb_type = str(sys.argv[i+1])
+                if deb_type == 'energy': debug_energy = 1
+                elif deb_type == 'demand': debug_demand = 1
+                elif deb_type == 'indexing': debug_indexing = 1
+                elif deb_type == 'res': debug_res = 1
 
         elif sys.argv[i] == '--days':
             days = int(sys.argv[i+1])
@@ -2176,15 +2526,7 @@ if len(sys.argv) > 1:
             help_printout()
             quit()
 
-#
-# Create output directory
-#
-now = dt.datetime.now().strftime("%Y_%m_%d__%H_%M_%S")
-output_dir = './Data/Output/' + site + '__' + str(now)
-if not os.path.exists(output_dir):
-    os.mkdir(output_dir)
-else:
-    print('error: output directory already exists')
+if not testing: output_dir = create_output_directory(site)            
 
 #
 # Superloop
@@ -2362,344 +2704,24 @@ for load_scaling_factor in load_scale_vector:
                     max_ttff.append(np.max(ttff))
                     min_ttff.append(np.min(ttff))
                     avg_ttff.append(np.average(ttff))
-
-                    if debug_res:
-                        print('TTFF [h]: max={} avg={} min={}'.format(max_ttff,avg_ttff,min_ttff))
-                        print('Confidence: 72h={} 336h={} {}h={}'.format(conf_72h,conf_336h,Xh,conf_Xh))
-
-                    if testing and site == 'badriver_clinic':
-                        batsum = np.sum(bat.P_kw_nf)
-                        if sim == 'ua': result = isclose(-42048.255,batsum,rel_tol=1e-6)
-                        elif sim == 'up': result = isclose(-20871.287,batsum,rel_tol=1e-6)
-                        elif sim == 'r': 
-                            result = isclose(0.717123,conf_336h[0],rel_tol=1e-6)                                                                                  
-                            print('\nchecksum (336h conf): {:.6f}'.format(conf_336h[0]))
-                        print('\ntest checksum is close: {}'.format(result))    
                      
                     if output_resilience: output_resilience_results(sim)
 
 
+# debug
+if debug_res:
+    print('TTFF [h]: max={} avg={} min={}'.format(max_ttff,avg_ttff,min_ttff))
+    print('Confidence: 72h={} 336h={} {}h={}'.format(conf_72h,conf_336h,Xh,conf_Xh))
+
+# wrap it up
 t_script_finished_dt = dt.datetime.now()
 t_elapsed_dt = t_script_finished_dt - t_script_begin_dt
 results.code_runtime_s = t_elapsed_dt.total_seconds()
 
+# outputs
+if superloop_enabled:   output_superloop_results(sim)
+if plots_on:            plots(sim)
+if testing:             print_test_results(site)
 
-
-#
-# Outputs
-#
-
-if superloop_enabled: output_superloop_results(sim)
-
-# plots
-if plots_on and (sim == 'ue'):
-
-    #
-    # 1
-    #
-
-    fig1, ax1 = plt.subplots(figsize=(20,8))
-    ax2 = ax1.twinx()
-
-    # main vectors
-    t = np.arange(1., L+1., 1.)
-    p = pv.P_kw_nf
-    l1 = load1.P_kw_nf
-    #l2 = load2.P_kw_nf
-    #l3 = load3.P_kw_nf
-    g = gen.P_kw_nf
-    d = np.clip(bat.P_kw_nf,0,10000)
-    c = -1*np.clip(bat.P_kw_nf,-10000,0)
-    G1 = np.clip(grid1.P_kw_nf,0,10000)
-
-    # consider putting in a horizontal demand target line
-    if peak_shaving:# and debug_demand:
-        m1 = load1.datetime[i].month
-        ax1.plot([1, L], [demand_target_1, demand_target_1], 'r', label='demand target', linewidth=.5)
-
-    # plot load and soc
-    ax1.plot(t, l1,           'k',    label='load1', linewidth=0.5)
-    ax1.plot(t, l1+c,         'k--',  label='load1 + batt charge', linewidth=0.5)
-    ax2.plot(t, bat.soc_nf,  'b:',   label='soc', linewidth=0.5)
-
-    # area plots
-    if plot_pv_first and grid_online:
-        ax1.plot(t, G1,       'r--',  label='grid import',linewidth=1.)
-        ax1.fill_between(t, 0,      p,     facecolor='lightyellow', label='pv')#, interpolate=True)
-        ax1.fill_between(t, p,      p+d,   facecolor='lightblue',   label='batt discharge')#, interpolate=True)
-        ax1.fill_between(t, p+d,    p+d+G1, facecolor='pink',        label='grid1')#, interpolate=True)
-
-    # area plots
-    elif plot_pv_first and not grid_online:
-        ax1.fill_between(t, 0,      p,          facecolor='lightyellow', label='pv')#, interpolate=True)
-        ax1.fill_between(t, p,      p+d,        facecolor='lightblue',  label='batt discharge')#, interpolate=True)
-        ax1.fill_between(t, p+d,    p+d+g,      facecolor='lightgreen', label='gen')#, interpolate=True)
-
-    # area plots
-    elif plot_grid_first and grid_online:
-        ax1.fill_between(t, 0,       G1,     facecolor='pink', label='grid')#, interpolate=True)
-        ax1.fill_between(t, G1,       G1+p,   facecolor='lightyellow', label='pv')#, interpolate=True)
-        ax1.fill_between(t, G1+p,     G1+p+d, facecolor='lightblue', label='batt discharge')#, interpolate=True)
-
-    ax1.set_xlabel('timestep')
-    ax1.set_ylabel('power [kW]')
-    ax2.set_ylabel('SOC')
-
-    ax1.set_title('elderly center')
-    ax1.legend(loc='upper left')
-    ax2.legend(loc='upper right')
-    ax1.set_xlim(1,L)
-    ax1.set_ylim(0,1.1*np.max([p,l1,g,d,c,G1]))
-    ax2.set_ylim(0,1.1)
-
-    #
-    # 2
-    #
-
-    fig2, ax1 = plt.subplots(figsize=(20,8))
-    ax2 = ax1.twinx()
-
-    # main vectors
-    t = np.arange(1., L+1., 1.)
-    p = pv.P_kw_nf
-    l2 = load2.P_kw_nf
-    g = gen.P_kw_nf
-    d = np.clip(bat.P_kw_nf,0,10000)
-    c = -1*np.clip(bat.P_kw_nf,-10000,0)
-    G2 = np.clip(grid2.P_kw_nf,0,10000)
-
-    # consider putting in a horizontal demand target line
-    if peak_shaving:# and debug_demand:
-        m2 = load2.datetime[i].month
-        ax1.plot([1, L], [demand_target_2, demand_target_2], 'r', label='demand target', linewidth=.5)
-
-    # plot load and soc
-    ax1.plot(t, l2,           'k',    label='load2', linewidth=0.5)
-    ax1.plot(t, l2+c,         'k--',  label='load2 + batt charge', linewidth=0.5)
-    ax2.plot(t, bat.soc_nf,  'b:',   label='soc', linewidth=0.5)
-
-    # area plots
-    if plot_pv_first and grid_online:
-        ax1.plot(t, G2,       'r--',  label='grid2 import',linewidth=1.)
-        ax1.fill_between(t, 0,      p,     facecolor='lightyellow', label='pv')#, interpolate=True)
-        ax1.fill_between(t, p,      p+d,   facecolor='lightblue',   label='batt discharge')#, interpolate=True)
-        ax1.fill_between(t, p+d,    p+d+G2, facecolor='pink',        label='grid2')#, interpolate=True)
-
-    # area plots
-    elif plot_pv_first and not grid_online:
-        ax1.fill_between(t, 0,      p,          facecolor='lightyellow', label='pv')#, interpolate=True)
-        ax1.fill_between(t, p,      p+d,        facecolor='lightblue',  label='batt discharge')#, interpolate=True)
-        ax1.fill_between(t, p+d,    p+d+g,      facecolor='lightgreen', label='gen')#, interpolate=True)
-
-    # area plots
-    elif plot_grid_first and grid_online:
-        ax1.fill_between(t, 0,       G2,     facecolor='pink', label='grid2')#, interpolate=True)
-        ax1.fill_between(t, G2,       G2+p,   facecolor='lightyellow', label='pv')#, interpolate=True)
-        ax1.fill_between(t, G2+p,     G2+p+d, facecolor='lightblue', label='batt discharge')#, interpolate=True)
-
-    ax1.set_xlabel('timestep')
-    ax1.set_ylabel('power [kW]')
-    ax2.set_ylabel('SOC')
-
-    ax1.set_title('head start')
-    ax1.legend(loc='upper left')
-    ax2.legend(loc='upper right')
-    ax1.set_xlim(1,L)
-    ax1.set_ylim(0,1.1*np.max([p,l2,g,d,c,G2]))
-    ax2.set_ylim(0,1.1)
-
-
-    #
-    # 3
-    #
-
-    fig2, ax1 = plt.subplots(figsize=(20,8))
-    ax2 = ax1.twinx()
-
-    # main vectors
-    t = np.arange(1., L+1., 1.)
-    p = pv.P_kw_nf
-    l3 = load3.P_kw_nf
-    g = gen.P_kw_nf
-    d = np.clip(bat.P_kw_nf,0,10000)
-    c = -1*np.clip(bat.P_kw_nf,-10000,0)
-    G3 = np.clip(grid3.P_kw_nf,0,10000)
-
-    # consider putting in a horizontal demand target line
-    if peak_shaving:# and debug_demand:
-        m3 = load3.datetime[i].month
-        ax1.plot([1, L], [demand_target_3, demand_target_3], 'r', label='demand target', linewidth=.5)
-
-    # plot load and soc
-    ax1.plot(t, l3,           'k',    label='load3', linewidth=0.5)
-    ax1.plot(t, l3+c,         'k--',  label='load3 + batt charge', linewidth=0.5)
-    ax2.plot(t, bat.soc_nf,  'b:',   label='soc', linewidth=0.5)
-
-    # area plots
-    if plot_pv_first and grid_online:
-        ax1.plot(t, G3,       'r--',  label='grid3 import',linewidth=1.)
-        ax1.fill_between(t, 0,      p,     facecolor='lightyellow', label='pv')#, interpolate=True)
-        ax1.fill_between(t, p,      p+d,   facecolor='lightblue',   label='batt discharge')#, interpolate=True)
-        ax1.fill_between(t, p+d,    p+d+G3, facecolor='pink',        label='grid3')#, interpolate=True)
-
-    # area plots
-    elif plot_pv_first and not grid_online:
-        ax1.fill_between(t, 0,      p,          facecolor='lightyellow', label='pv')#, interpolate=True)
-        ax1.fill_between(t, p,      p+d,        facecolor='lightblue',  label='batt discharge')#, interpolate=True)
-        ax1.fill_between(t, p+d,    p+d+g,      facecolor='lightgreen', label='gen')#, interpolate=True)
-
-    # area plots
-    elif plot_grid_first and grid_online:
-        ax1.fill_between(t, 0,       G3,     facecolor='pink', label='grid3')#, interpolate=True)
-        ax1.fill_between(t, G3,       G2+p,   facecolor='lightyellow', label='pv')#, interpolate=True)
-        ax1.fill_between(t, G3+p,     G3+p+d, facecolor='lightblue', label='batt discharge')#, interpolate=True)
-
-    ax1.set_xlabel('timestep')
-    ax1.set_ylabel('power [kW]')
-    ax2.set_ylabel('SOC')
-
-    ax1.set_title('health clinic')
-    ax1.legend(loc='upper left')
-    ax2.legend(loc='upper right')
-    ax1.set_xlim(1,L)
-    ax1.set_ylim(0,1.1*np.max([p,l3,g,d,c,G3]))
-    ax2.set_ylim(0,1.1)
-
-    plt.show()
-
-
-
-elif plots_on and (sim == 'rmg'):
-    #plt.style.use('dark_background')
-    #plt.rcParams['axes.prop_cycle']
-
-    # plot type
-    fig, ax1 = plt.subplots(figsize=(20,8.5))
-    ax2 = ax1.twinx()
-
-    # main vectors
-    t = np.arange(1., L+1., 1.)
-    p = pv.P_kw_nf
-    l = load.P_kw_nf
-    g1 = gen1.P_kw_nf
-    g2 = gen2.P_kw_nf
-    d = np.clip(bat.P_kw_nf,0,10000)
-    c = -1*np.clip(bat.P_kw_nf,-10000,0)
-    u = np.clip(grid.P_kw_nf,0,10000)
-
-    # consider putting in a horizontal demand target line
-    if peak_shaving:# and debug_demand:
-        m = load.datetime[i].month
-        ax1.plot([1, L], [demand_targets.monthly[m-1], demand_targets.monthly[m-1]], 'r', label='demand target', linewidth=.5)
-
-    # plot load and soc
-    ax1.plot(t, l,           'k',    label='load', linewidth=0.5)
-    ax1.plot(t, l+c,         'k--',  label='load + batt charge', linewidth=0.5)
-    ax2.plot(t, bat.soc_nf,  'b:',   label='soc', linewidth=0.5)
-
-    # area plots
-    if plot_pv_first and grid_online:
-        ax1.plot(t, u,       'r--',  label='grid import',linewidth=1.)
-        ax1.fill_between(t, 0,      p,     facecolor='lightyellow', label='pv')#, interpolate=True)
-        ax1.fill_between(t, p,      p+d,   facecolor='lightblue',   label='batt discharge')#, interpolate=True)
-        ax1.fill_between(t, p+d,    p+d+u, facecolor='pink',        label='grid')#, interpolate=True)
-
-    # area plots
-    elif plot_pv_first and not grid_online:
-        ax1.fill_between(t, 0,      p,          facecolor='lightyellow', label='pv')#, interpolate=True)
-        ax1.fill_between(t, p,      p+d,        facecolor='lightblue',  label='batt discharge')#, interpolate=True)
-        ax1.fill_between(t, p+d,    p+d+g1,     facecolor='lightgreen', label='gen1')#, interpolate=True)
-        ax1.fill_between(t, p+d+g1, p+d+g1+g2,  facecolor='green', label='gen2')#, interpolate=True)
-
-    # area plots
-    elif plot_grid_first and grid_online:
-        ax1.fill_between(t, 0,       u,     facecolor='pink', label='grid')#, interpolate=True)
-        ax1.fill_between(t, u,       u+p,   facecolor='lightyellow', label='pv')#, interpolate=True)
-        ax1.fill_between(t, u+p,     u+p+d, facecolor='lightblue', label='batt discharge')#, interpolate=True)
-
-    ax1.set_xlabel('timestep')
-    ax1.set_ylabel('power [kW]')
-    ax2.set_ylabel('SOC')
-
-    ax1.legend(loc='upper left')
-    ax2.legend(loc='upper right')
-    ax1.set_xlim(1,L)
-    ax1.set_ylim(0,1.1*np.max([l+c]))
-    ax2.set_ylim(0,1.1)
-
-    #fig.tight_layout()
-    plt.show()
-
-elif plots_on:
-    #plt.style.use('dark_background')
-    #plt.rcParams['axes.prop_cycle']
-
-    # plot type
-    fig, ax1 = plt.subplots(figsize=(20,8.5))
-    ax2 = ax1.twinx()
-
-    # main vectors
-    t = np.arange(1., L+1., 1.)
-    p = pv.P_kw_nf
-    l = load.P_kw_nf
-    g = gen.P_kw_nf
-    d = np.clip(bat.P_kw_nf,0,10000)
-    c = -1*np.clip(bat.P_kw_nf,-10000,0)
-    u = np.clip(grid.P_kw_nf,0,10000)
-
-    # consider putting in a horizontal demand target line
-    if peak_shaving:# and debug_demand:
-        m = load.datetime[i].month
-        ax1.plot([1, L], [demand_targets.monthly[m-1], demand_targets.monthly[m-1]], 'r', label='demand target', linewidth=.5)
-
-    # plot load and soc
-    ax1.plot(t, l,           'k',    label='load', linewidth=0.5)
-    ax1.plot(t, l+c,         'k--',  label='load + batt charge', linewidth=0.5)
-    ax2.plot(t, bat.soc_nf,  'b:',   label='soc', linewidth=0.5)
-
-    # area plots
-    if plot_pv_first and grid_online:
-        ax1.plot(t, u,       'r--',  label='grid import',linewidth=1.)
-        ax1.fill_between(t, 0,      p,     facecolor='lightyellow', label='pv')#, interpolate=True)
-        ax1.fill_between(t, p,      p+d,   facecolor='lightblue',   label='batt discharge')#, interpolate=True)
-        ax1.fill_between(t, p+d,    p+d+u, facecolor='pink',        label='grid')#, interpolate=True)
-
-    # area plots
-    elif plot_pv_first and not grid_online:
-        ax1.fill_between(t, 0,      p,          facecolor='lightyellow', label='pv')#, interpolate=True)
-        ax1.fill_between(t, p,      p+d,        facecolor='lightblue',  label='batt discharge')#, interpolate=True)
-        ax1.fill_between(t, p+d,    p+d+g,      facecolor='lightgreen', label='gen')#, interpolate=True)
-
-    # area plots
-    elif plot_grid_first and grid_online:
-        ax1.fill_between(t, 0,       u,     facecolor='pink', label='grid')#, interpolate=True)
-        ax1.fill_between(t, u,       u+p,   facecolor='lightyellow', label='pv')#, interpolate=True)
-        ax1.fill_between(t, u+p,     u+p+d, facecolor='lightblue', label='batt discharge')#, interpolate=True)
-
-    ax1.set_xlabel('timestep')
-    ax1.set_ylabel('power [kW]')
-    ax2.set_ylabel('SOC')
-
-    ax1.legend(loc='upper left')
-    ax2.legend(loc='upper right')
-    ax1.set_xlim(1,L)
-    ax1.set_ylim(0,1.1*np.max([p,l,g,d,c,u]))
-    ax2.set_ylim(0,1.1)
-
-    #fig.tight_layout()
-    plt.show()
-
-    # if debug_demand:
-    #     plt.plot(load.datetime,grid.P_kw_nf)
-    #     plt.show()
-
-
-# print errors
 err.print_faults()
-
-if not grid_online and not plots_on and not debug:
-
-    if platform.system() == 'Darwin':   # macos
-        os.system('say "Ding! (resilient) fries are done"')
-    else:
-        sys.stdout.write('\a') # beep
+notify_script_finished()
