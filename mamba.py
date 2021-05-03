@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "7.1"
+__version__ = "7.2"
 
 #
 # Versions
 #
 
+#   7.2 - hot fix for multigen resilience (extra gen power was being wasted), gen min/max on-time arg, functionalize program argument parsing
 #   7.1 - output files contain load/solar profile notes, functionalize more code, some minor housekeeping, testing no output, turn off fuel curve calc error
 # 7.0 - add mambavis.py, --test automatic testing, new -b -g args and -s modified, python 3.8 
 #   6.23 - minor peak shaving change in case of extra solar
@@ -154,8 +155,8 @@ class GenClass:
         me.P_kw_nf = np.zeros((length,), dtype=float)
         me.fuelConsumedTotal = 0                                    # [gal]
         me.fuelConsumed_gal_nf = np.zeros((length,), dtype=float)   #[gal]
-        me.min_on_time = 1      # [timesteps]
-        me.min_off_time = 1     # [timesteps]
+        me.min_on_time = gen_min_on_time # [timesteps]
+        me.min_off_time = gen_min_off_time # [timesteps]
         me.on_time = me.min_on_time
         me.off_time = me.min_off_time
         me.prev_power = 0
@@ -558,6 +559,183 @@ class FaultClass:
 ################################################################################
 
 #
+# Parse Program Arguments
+#
+def parse_program_arguments():
+    global site, sim, pv_scaling_factor, load_scaling_factor, runs, days, L, skip_ahead, test
+    global batt_power, batt_energy, calc_energy_from_hrs, batt_hrs, batt_eff, dod, vary_soc0, batt_daytime_gen_chg, batt_grid_charging_period
+    global gen_power, gen_tank, gen_fuel_propane, gen_min_on_time, gen_min_off_time
+    global gen1_power, gen2_power, gen1_tank, gen2_tank
+    global Xh, PS_arb_thresh
+    global output_vectors, batt_vector_print, plots_on, plot_pv_first, plot_grid_first, plot_type
+    global load_stats, filename_param, old_profile_import
+    global debug, debug_energy, debug_demand, debug_indexing, debug_res
+    global superloop_enabled, hard_code_superloop
+    global pv_scale_vector, load_scale_vector, batt_power_vector, batt_hrs_vector
+    global __version__, sys
+
+    if len(sys.argv) > 1:
+
+        for i in range(1, len(sys.argv)):
+
+            if sys.argv[i] == '-s':
+
+                site = str(sys.argv[i+1])
+                if len(sys.argv) > (i+1):           # make sure there are more args                
+                    if sys.argv[i+2][0] != '-':
+                        sim = str(sys.argv[i+2])
+                        configure_sim(i+1,sim) # indexing quirk
+
+            elif sys.argv[i] == '-sim':
+                sim = str(sys.argv[i+1])
+                configure_sim(i,sim)           
+
+            elif sys.argv[i] == '-p':
+                pv_scaling_factor = float(sys.argv[i+1])
+
+            elif sys.argv[i] == '-ls':
+                load_scaling_factor = float(sys.argv[i+1])
+
+            elif sys.argv[i] == '-r':
+                runs = int(sys.argv[i+1])
+
+            elif sys.argv[i] == '-b':
+                batt_power = float(sys.argv[i+1])
+                batt_energy = float(sys.argv[i+2])    
+
+            elif sys.argv[i] == '-bp':
+                batt_power = float(sys.argv[i+1])
+                calc_energy_from_hrs = 0
+
+            elif sys.argv[i] == '-bh':
+                batt_hrs = float(sys.argv[i+1])
+                calc_energy_from_hrs = 1
+
+            elif sys.argv[i] == '-be':
+                batt_energy = float(sys.argv[i+1])
+
+            elif sys.argv[i] == '-bef':
+                batt_eff = float(sys.argv[i+1])
+
+            elif sys.argv[i] == '-bd':
+                dod = float(sys.argv[i+1])
+                batt_energy = batt_energy * dod
+
+            elif sys.argv[i] == '-bvs':
+                vary_soc0 = True
+
+            elif sys.argv[i] == '-bdg':
+                batt_daytime_gen_chg = True
+
+            elif sys.argv[i] == '-bcp':
+                batt_grid_charging_period = True
+
+            elif sys.argv[i] == '-g':
+                gen_power = float(sys.argv[i+1])
+                gen_tank = float(sys.argv[i+2])
+
+            elif sys.argv[i] == '-gp':
+                gen_power = float(sys.argv[i+1])
+
+            elif sys.argv[i] == '-gt':
+                gen_tank = float(sys.argv[i+1])
+
+            elif sys.argv[i] == '-gfp':
+                gen_fuel_propane = 1
+
+            elif sys.argv[i] == '-gm':
+                gen_min_on_time = int(sys.argv[i+1])
+                gen_min_off_time = int(sys.argv[i+2])
+
+            elif sys.argv[i] == '-c': # length of time for confidence interval calc
+                Xh = int(sys.argv[i+1])
+
+            elif sys.argv[i] == '-psat':
+                PS_arb_thresh = float(sys.argv[i+1])
+
+            elif sys.argv[i] == '-v':
+                output_vectors = 1
+
+            elif sys.argv[i] == '-vb':
+                batt_vector_print = 1
+
+            elif sys.argv[i] == '--plots':
+                plots_on = 1
+                plot_pv_first = 1
+                plot_grid_first = 0
+
+                if len(sys.argv) > i+1:         # make sure there are more args
+                    plot_type = str(sys.argv[i+1])
+
+                    if plot_type == 'u':
+                        plot_pv_first = 0
+                        plot_grid_first = 1
+
+            elif sys.argv[i] == '--loadstats':
+                load_stats = True
+
+            elif sys.argv[i] == '--debug':
+                debug = 1                       # basic debug only
+                __version__ = __version__ + '_debug'
+                if i+1 < len(sys.argv):         # make sure there are more args
+                    deb_type = str(sys.argv[i+1])
+                    if deb_type == 'energy': debug_energy = 1
+                    elif deb_type == 'demand': debug_demand = 1
+                    elif deb_type == 'indexing': debug_indexing = 1
+                    elif deb_type == 'res': debug_res = 1
+
+            elif sys.argv[i] == '--days':
+                days = int(sys.argv[i+1])
+                L = days*24*4                     # length of simulation in timesteps
+
+            elif sys.argv[i] == '-sk':
+                skip_ahead = int(sys.argv[i+1])
+
+            elif sys.argv[i] == '-sl':
+                superloop_enabled = 1
+                hard_code_superloop = 1
+
+            elif sys.argv[i] == '-slp':
+                j = i + 5 + 1                # expect 5 more args
+                superloop_enabled = 1
+                strs = sys.argv[i+1:j]
+                pv_scale_vector = [float(i) for i in strs]
+
+            elif sys.argv[i] == '-slls':
+                j = i + 5 + 1               # expect 5 more args
+                superloop_enabled = 1
+                strs = sys.argv[i+1:j]
+                load_scale_vector = [float(i) for i in strs]
+
+            elif sys.argv[i] == '-slbp':
+                j = i + 2 + 1               # expect 2 more args
+                superloop_enabled = 1
+                strs = sys.argv[i+1:j]
+                batt_power_vector = [int(i) for i in strs]
+
+            elif sys.argv[i] == '-slbh':
+                j = i + 6 + 1               # expect 6 more args
+                superloop_enabled = 1
+                calc_energy_from_hrs = 1
+                strs = sys.argv[i+1:j]
+                batt_hrs_vector = [int(i) for i in strs]
+
+            elif sys.argv[i] == '-sv':
+                filename_param = str(sys.argv[i+1])
+
+            elif sys.argv[i] == '-opi':
+                old_profile_import = True
+
+            elif sys.argv[i] == '--test':            
+                test = sys.argv[i+1]
+                sim = sys.argv[i+2]
+                configure_test(test,sim)          
+
+            elif sys.argv[i] == '--help' :
+                help_printout()
+                quit()
+
+#
 # Print help
 #
 
@@ -640,11 +818,13 @@ def check_indexing():
 # configure simulation
 #            
 
-def configure_sim(sim):
+def configure_sim(i,sim):
     global grid_online, gen_power, simulation_interval, runs, days, L, output_vectors
     global output_resilience
     global gen1_power, gen1_tank, gen2_power, gen2_tank, gen_power
     global grid_charging, entech, peak_shaving
+    global sys
+
 
     if sim == 'r':
         grid_online = 0
@@ -1048,9 +1228,9 @@ def import_pv_data_vc(site):
     pv_all.P_kw_nf = np.zeros((35040,), dtype=float)
 
     # clip header, select only right-most column
-    md = pv_scaling_factor * d[i:,pv_all.version]    # clip header, scale accordingly
+    dv = pv_scaling_factor * d[i:,pv_all.version] # clip header and scale
 
-    pv_all.P_kw_nf = np.concatenate((md,md),axis=0) # wrap around new years
+    pv_all.P_kw_nf = np.concatenate((dv,dv),axis=0) # wrap around new years
 
     for n in range (1, 35040): t.append(t[n-1] + dt.timedelta(minutes = 15))
     pv_all.datetime = t+t
@@ -1310,12 +1490,13 @@ def simulate_resilience_multigen(t_0,L):
             elif bat.empty(i):
                 chg = 1
 
-            # old + power check
+            # old + power check (??)
             if chg == 0:
                 battpower = bat.power_check(i,LSimbalance)
                 LSBimbalance =  LSimbalance - battpower
                 gen1power = gen1.power_check(i,LSBimbalance)
                 gen2power = gen2.power_check(i,LSBimbalance - gen1power)
+                battpower = bat.power_check(i,LSimbalance - gen1power - gen2power)
 
             elif chg == 1:
                 LSGimbalance = LSimbalance - gen1.power_check(i,gen1.Pn_kw)
@@ -1323,7 +1504,7 @@ def simulate_resilience_multigen(t_0,L):
                 LSBimbalance = LSimbalance - battpower
                 gen1power = gen1.power_check(i,LSBimbalance)
                 gen2power = gen2.power_check(i,0)
-                #battpower = bat.power_check(i,LSimbalance - gen1power - gen2power)
+                battpower = bat.power_check(i,LSimbalance - gen1power - gen2power)
 
                 if not isclose(LSBimbalance,gen1power):
                     LSGimbalance = LSimbalance - gen1.power_check(i,gen1.Pn_kw) - gen2.power_check(i,gen2.Pn_kw)
@@ -1331,7 +1512,7 @@ def simulate_resilience_multigen(t_0,L):
                     LSBimbalance = LSimbalance - battpower
                     gen1power = gen1.power_check(i,LSBimbalance)
                     gen2power = gen2.power_check(i,LSBimbalance - gen1power)
-                    #battpower = bat.power_check(i,LSimbalance - gen1power - gen2power)
+                    battpower = bat.power_check(i,LSimbalance - gen1power - gen2power)
 
         # tanks empty
         else:
@@ -2349,6 +2530,7 @@ gen_tank = 0.          # gal
 gen1_tank, gen2_tank = 0., 0. # gal
 gen_fuel_propane = 0    # 1 = propane, 0 = diesel
 gen1_fuel_propane, gen2_fuel_propane = 0, 0
+gen_min_on_time, gen_min_off_time = 1,1
 calc_energy_from_hrs = 0  # batt power such that capacity = 1h
 
 # outputs on/off
@@ -2364,167 +2546,9 @@ debug_indexing = 0
 debug_res = 0
 batt_vector_print = 0
 
-#
-# Program Arguments
-#
-
 # program arguments override defaults
 # later program arguments override earlier ones
-if len(sys.argv) > 1:
-
-    for i in range(1, len(sys.argv)):
-
-        if sys.argv[i] == '-s':
-            site = str(sys.argv[i+1])
-            if len(sys.argv) > 2:           # make sure there are more args
-                if sys.argv[i+2][0] != '-':
-                    sim = str(sys.argv[i+2])
-                    configure_sim(sim)
-
-        elif sys.argv[i] == '-sim':
-            sim = str(sys.argv[i+1])
-            configure_sim(sim)           
-
-        elif sys.argv[i] == '-p':
-            pv_scaling_factor = float(sys.argv[i+1])
-
-        elif sys.argv[i] == '-ls':
-            load_scaling_factor = float(sys.argv[i+1])
-
-        elif sys.argv[i] == '-r':
-            runs = int(sys.argv[i+1])
-
-        elif sys.argv[i] == '-b':
-            batt_power = float(sys.argv[i+1])
-            batt_energy = float(sys.argv[i+2])    
-
-        elif sys.argv[i] == '-bp':
-            batt_power = float(sys.argv[i+1])
-            calc_energy_from_hrs = 0
-
-        elif sys.argv[i] == '-bh':
-            batt_hrs = float(sys.argv[i+1])
-            calc_energy_from_hrs = 1
-
-        elif sys.argv[i] == '-be':
-            batt_energy = float(sys.argv[i+1])
-
-        elif sys.argv[i] == '-bef':
-            batt_eff = float(sys.argv[i+1])
-
-        elif sys.argv[i] == '-bd':
-            dod = float(sys.argv[i+1])
-            batt_energy = batt_energy * dod
-
-        elif sys.argv[i] == '-bvs':
-            vary_soc0 = True
-
-        elif sys.argv[i] == '-bdg':
-            batt_daytime_gen_chg = True
-
-        elif sys.argv[i] == '-bcp':
-            batt_grid_charging_period = True
-
-        elif sys.argv[i] == '-g':
-            gen_power = float(sys.argv[i+1])
-            gen_tank = float(sys.argv[i+2])
-
-        elif sys.argv[i] == '-gp':
-            gen_power = float(sys.argv[i+1])
-
-        elif sys.argv[i] == '-gt':
-            gen_tank = float(sys.argv[i+1])
-
-        elif sys.argv[i] == '-gfp':
-            gen_fuel_propane = 1
-
-        elif sys.argv[i] == '-c': # length of time for confidence interval calc
-            Xh = int(sys.argv[i+1])
-
-        elif sys.argv[i] == '-psat':
-            PS_arb_thresh = float(sys.argv[i+1])
-
-        elif sys.argv[i] == '-v':
-            output_vectors = 1
-
-        elif sys.argv[i] == '-vb':
-            batt_vector_print = 1
-
-        elif sys.argv[i] == '--plots':
-            plots_on = 1
-            plot_pv_first = 1
-            plot_grid_first = 0
-
-            if len(sys.argv) > i+1:         # make sure there are more args
-                plot_type = str(sys.argv[i+1])
-
-                if plot_type == 'u':
-                    plot_pv_first = 0
-                    plot_grid_first = 1
-
-        elif sys.argv[i] == '--loadstats':
-            load_stats = True
-
-        elif sys.argv[i] == '--debug':
-            debug = 1                       # basic debug only
-            __version__ = __version__ + '_debug'
-            if i+1 < len(sys.argv):         # make sure there are more args
-                deb_type = str(sys.argv[i+1])
-                if deb_type == 'energy': debug_energy = 1
-                elif deb_type == 'demand': debug_demand = 1
-                elif deb_type == 'indexing': debug_indexing = 1
-                elif deb_type == 'res': debug_res = 1
-
-        elif sys.argv[i] == '--days':
-            days = int(sys.argv[i+1])
-            L = days*24*4                     # length of simulation in timesteps
-
-        elif sys.argv[i] == '-sk':
-            skip_ahead = int(sys.argv[i+1])
-
-        elif sys.argv[i] == '-sl':
-            superloop_enabled = 1
-            hard_code_superloop = 1
-
-        elif sys.argv[i] == '-slp':
-            j = i + 5 + 1                # expect 5 more args
-            superloop_enabled = 1
-            strs = sys.argv[i+1:j]
-            pv_scale_vector = [float(i) for i in strs]
-
-        elif sys.argv[i] == '-slls':
-            j = i + 5 + 1               # expect 5 more args
-            superloop_enabled = 1
-            strs = sys.argv[i+1:j]
-            load_scale_vector = [float(i) for i in strs]
-
-        elif sys.argv[i] == '-slbp':
-            j = i + 2 + 1               # expect 2 more args
-            superloop_enabled = 1
-            strs = sys.argv[i+1:j]
-            batt_power_vector = [int(i) for i in strs]
-
-        elif sys.argv[i] == '-slbh':
-            j = i + 6 + 1               # expect 6 more args
-            superloop_enabled = 1
-            calc_energy_from_hrs = 1
-            strs = sys.argv[i+1:j]
-            batt_hrs_vector = [int(i) for i in strs]
-
-        elif sys.argv[i] == '-sv':
-            filename_param = str(sys.argv[i+1])
-
-        elif sys.argv[i] == '-opi':
-            old_profile_import = True
-
-        elif sys.argv[i] == '--test':            
-            test = sys.argv[i+1]
-            sim = sys.argv[i+2]
-            configure_test(test,sim)          
-
-        elif sys.argv[i] == '--help' :
-            help_printout()
-            quit()
+parse_program_arguments()     
 
 if not testing: output_dir = create_output_directory(site)            
 

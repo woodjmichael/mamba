@@ -43,6 +43,7 @@ Temporary Items
 
 # VS Code
 .vscode
+__pycache__
 
 # End of https://www.gitignore.io/api/macos
 *.png
