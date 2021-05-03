@@ -12,6 +12,7 @@ __version__ = "7.2"
 # Versions
 #
 
+#   7.3 - same hot fix for single gen resilience (don't waste extra gen power)
 #   7.2 - hot fix for multigen resilience (extra gen power was being wasted), gen min/max on-time arg, functionalize program argument parsing
 #   7.1 - output files contain load/solar profile notes, functionalize more code, some minor housekeeping, testing no output, turn off fuel curve calc error
 # 7.0 - add mambavis.py, --test automatic testing, new -b -g args and -s modified, python 3.8 
@@ -1387,10 +1388,12 @@ def simulate_resilience(t_0,L):
             if chg == 0:
                 battpower = bat.power_check(i,LSimbalance)
                 genpower = gen.power_check(i,LSimbalance - battpower)
+                battpower = bat.power_check(i,LSimbalance - genpower) # in case gen cant be shut down
 
             elif chg == 1:
                 battpower = bat.power_check(i,LSimbalance - gen.power_check(i,gen.Pn_kw))
                 genpower = gen.power_check(i,LSimbalance - battpower)
+                battpower = bat.power_check(i,LSimbalance - genpower) # in case gen cant be shut down
 
         elif gen.tank_empty():
             chg = 0
@@ -1496,7 +1499,7 @@ def simulate_resilience_multigen(t_0,L):
                 LSBimbalance =  LSimbalance - battpower
                 gen1power = gen1.power_check(i,LSBimbalance)
                 gen2power = gen2.power_check(i,LSBimbalance - gen1power)
-                battpower = bat.power_check(i,LSimbalance - gen1power - gen2power)
+                battpower = bat.power_check(i,LSimbalance - gen1power - gen2power) # in case gen cant be shut down
 
             elif chg == 1:
                 LSGimbalance = LSimbalance - gen1.power_check(i,gen1.Pn_kw)
@@ -1504,7 +1507,7 @@ def simulate_resilience_multigen(t_0,L):
                 LSBimbalance = LSimbalance - battpower
                 gen1power = gen1.power_check(i,LSBimbalance)
                 gen2power = gen2.power_check(i,0)
-                battpower = bat.power_check(i,LSimbalance - gen1power - gen2power)
+                battpower = bat.power_check(i,LSimbalance - gen1power - gen2power) # in case gen cant be shut down
 
                 if not isclose(LSBimbalance,gen1power):
                     LSGimbalance = LSimbalance - gen1.power_check(i,gen1.Pn_kw) - gen2.power_check(i,gen2.Pn_kw)
@@ -1512,7 +1515,7 @@ def simulate_resilience_multigen(t_0,L):
                     LSBimbalance = LSimbalance - battpower
                     gen1power = gen1.power_check(i,LSBimbalance)
                     gen2power = gen2.power_check(i,LSBimbalance - gen1power)
-                    battpower = bat.power_check(i,LSimbalance - gen1power - gen2power)
+                    battpower = bat.power_check(i,LSimbalance - gen1power - gen2power) # in case gen cant be shut down
 
         # tanks empty
         else:
