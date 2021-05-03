@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "7.2"
+__version__ = "7.3.1"
 
 #
 # Versions
 #
 
+#   7.3.1 - version error
 #   7.3 - same hot fix for single gen resilience (don't waste extra gen power)
 #   7.2 - hot fix for multigen resilience (extra gen power was being wasted), gen min/max on-time arg, functionalize program argument parsing
 #   7.1 - output files contain load/solar profile notes, functionalize more code, some minor housekeeping, testing no output, turn off fuel curve calc error
