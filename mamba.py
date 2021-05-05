@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "7.3.1"
+__version__ = "7.4"
 
 #
 # Versions
 #
 
+#   7.4 - rmg sim has required program arguments for fuel type (both gens), "--help" moved to Quickstart.md
 #   7.3.1 - version error
 #   7.3 - same hot fix for single gen resilience (don't waste extra gen power)
 #   7.2 - hot fix for multigen resilience (extra gen power was being wasted), gen min/max on-time arg, functionalize program argument parsing
@@ -145,7 +146,7 @@ class DataClass:
 #
 
 class GenClass:
-    def __init__(me, Pn_kw, a, b, tankCap, tstep, length):
+    def __init__(me, Pn_kw, a, b, tankCap, propane, tstep, length):
         me.timestep = tstep                                         # [s]
         me.dpph = 3600./tstep
         me.tstepHr = tstep/3600.
@@ -162,6 +163,8 @@ class GenClass:
         me.on_time = me.min_on_time
         me.off_time = me.min_off_time
         me.prev_power = 0
+        me.isPropane = propane
+        
 
     def clear(me):
         me.P_kw_nf.fill(0)
@@ -233,7 +236,6 @@ class GenClass:
 
     def tank_empty(me):
         return  (me.fuelTankCapacity - me.fuelConsumedTotal) < 0.001
-
 
 #
 # Grid
@@ -733,50 +735,6 @@ def parse_program_arguments():
                 sim = sys.argv[i+2]
                 configure_test(test,sim)          
 
-            elif sys.argv[i] == '--help' :
-                help_printout()
-                quit()
-
-#
-# Print help
-#
-
-def help_printout():
-    print('\nmamba.py\nmuGrid Analytics LLC\nMichael Wood\nmichael.wood@mugrid.com')
-    print('')
-    print('Arguments are best issued in this order, with the values following directly after keys')
-    print('e.g. % python mamba.py -s mugrid_test -bp 1.5 -be 3 .. (etc)')
-    print('')
-    print('Typical Command Line Arguments')
-    print(' Simulation type:        -sim [simulation type]      e.g. -sim r')
-    print(' Site name:              -s  [sitename] [optional: sim]')
-    print('                                                     e.g. -s mugrid_test')
-    print('                                                     e.g. -s mugrid_test r')
-    print(' Battery:                -b [power kW] [energy kwh]  e.g. -b 60 120')
-    print(' Generator:              -g [power kW] [tank gal]    e.g. -gp 50 200')
-    print('')
-    print('Optional Command Line Arguments (must come after -sim)')
-    print(' Simulation resilience multiple generators')
-    print('                         -sim rmg [gen1 power, gen1 tank, gen2 power, gen2 tank]')
-    print('                                                     e.g. -sim rmg 20 100 50 200')
-    print(' Run "n" simulations:    -r [n]                      e.g. -r 1           default=2920')
-    print(' Dispatch vectors ON:    -v                          e.g. -v             default=OFF')
-    print(' Battery vector ON:      -vb                         e.g. -vb            default=OFF')
-    print(' Load stats ON:          --loadstats                 e.g. --loadstats    default=OFF')
-    print(' Skip ahead "h" hours:   -sk [h]                     e.g. -sk 24         default=OFF')
-    print(' Superloop enable:       -sl                         e.g. -sl            default=OFF')
-    print(' Enable battery daytime generator charging ')
-    print('                         -bdg                        e.g. -bdg           default=OFF')
-    print(' Gen fuel is propane:    -gfp                        e.g. -gfp           default=OFF')
-    print(' Days to simulate:       --days [days]               e.g. --days 3       default=365')
-    print(' Battery depth of dischg:-bd [dod]                   e.g. -bd 0.95       default=1.0')
-    print('     -bd must come after -be because it modifies battery energy')
-    print('     NB: -bd just changes the battery energy, so soc will still be 0-100%')
-    print(' Plots ON (option to plot normal or utility first):')
-    print('                         --plots [ | u]              e.g. --plots        default=OFF')
-    print('Debug (see code):        --debug [ | type]           e.g. --debug res    default=OFF')
-    print('')
-
 def check_python_version(ver):
     if sys.version_info < ver:
         print('error! python version less than 3.7')
@@ -821,9 +779,10 @@ def check_indexing():
 #            
 
 def configure_sim(i,sim):
-    global grid_online, gen_power, simulation_interval, runs, days, L, output_vectors
+    global grid_online, simulation_interval, runs, days, L, output_vectors
     global output_resilience
-    global gen1_power, gen1_tank, gen2_power, gen2_tank, gen_power
+    global gen_power, gen_tank, gen_fuel_propane
+    global gen1_power, gen1_tank, gen1_fuel_propane, gen2_power, gen2_tank, gen2_fuel_propane
     global grid_charging, entech, peak_shaving
     global sys
 
@@ -839,8 +798,13 @@ def configure_sim(i,sim):
     elif sim == 'rmg':
         gen1_power = float(sys.argv[i+2])
         gen1_tank = float(sys.argv[i+3])
-        gen2_power = float(sys.argv[i+4])
-        gen2_tank = float(sys.argv[i+5])
+        if str(sys.argv[i+4]) == 'p':
+            gen1_fuel_propane = 1
+        gen2_power = float(sys.argv[i+5])
+        gen2_tank = float(sys.argv[i+6])
+        if str(sys.argv[i+7]) == 'p':
+            gen2_fuel_propane = 1
+
         grid_online = 0
         simulation_interval = 3
         runs = 365*24//simulation_interval   # number of iterations
@@ -2533,7 +2497,7 @@ gen1_power, gen2_power = 0., 0. #kw
 gen_tank = 0.          # gal
 gen1_tank, gen2_tank = 0., 0. # gal
 gen_fuel_propane = 0    # 1 = propane, 0 = diesel
-gen1_fuel_propane, gen2_fuel_propane = 0, 0
+gen1_fuel_propane, gen2_fuel_propane = 0, 0    # 1 = propane, 0 = diesel
 gen_min_on_time, gen_min_off_time = 1,1
 calc_energy_from_hrs = 0  # batt power such that capacity = 1h
 
@@ -2679,7 +2643,7 @@ for load_scaling_factor in load_scale_vector:
                             load2 =  DataClass(  15.*60.,L)                 # timestep[s]
                             load3 =  DataClass(  15.*60.,L)                 # timestep[s]
                         pv =    PVClass(  15.*60.,L)                   # timestep[s]
-                        gen =   GenClass(   gen_power,gen_fuelA,gen_fuelB,gen_tank,15.*60.,L)   # kW, fuel A, fuel B, tank[gal], tstep[s]
+                        gen =   GenClass(   gen_power,gen_fuelA,gen_fuelB,gen_tank,gen_fuel_propane,15.*60.,L)   # kW, fuel A, fuel B, tank[gal], tstep[s]
                         bat =   BattClass(  batt_power,batt_energy,1,batt_eff,15*60.,L)      # kW, kWh, soc0 tstep[s]
                         grid =  GridClass(  1000.,L)                    # kW
                         if sim == 'ue':
@@ -2687,8 +2651,8 @@ for load_scaling_factor in load_scale_vector:
                             grid2 =  GridClass(1000.,L)                    # kW
                             grid3 =  GridClass(1000.,L)                    # kW
                         if sim == 'rmg':
-                            gen1 =   GenClass(gen1_power,gen1_fuelA,gen1_fuelB,gen1_tank,15.*60.,L)   # kW, fuel A, fuel B, tank[gal], tstep[s]
-                            gen2 =   GenClass(gen2_power,gen2_fuelA,gen2_fuelB,gen2_tank,15.*60.,L)   # kW, fuel A, fuel B, tank[gal], tstep[s]
+                            gen1 =   GenClass(gen1_power,gen1_fuelA,gen1_fuelB,gen1_tank,gen1_fuel_propane,15.*60.,L)   # kW, fuel A, fuel B, tank[gal], tstep[s]
+                            gen2 =   GenClass(gen2_power,gen2_fuelA,gen2_fuelB,gen2_tank,gen2_fuel_propane,15.*60.,L)   # kW, fuel A, fuel B, tank[gal], tstep[s]
 
                         microgrid = MicrogridClass()
 

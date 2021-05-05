@@ -110,3 +110,53 @@ With the above arguments you'll get only the dispatch starting at 12am Jan. To s
 ### More Analysis
 
 I included an Analysis folder which has some dumb spreadsheets for Apple Numbers, if you don’t have that I can export to excel but it’s a little messy. This was a time-crunch kludge — clearly the code should produce all the plots.
+
+## Program Arguments   
+Program arguments are best issued in this order, with the values following directly after keys
+`python mamba.py -s mugrid_test r -b 1.5 -be 3 .. (etc)`
+
+
+
+### Typical
+
+| Description         | Structure                  | Example          |
+| ------------------- | -------------------------- | ---------------- |
+| Site and simulation | -s  [sitename] [sim]       | -s mugrid_test r |
+| Battery             | -b [power kW] [energy kwh] | -b 60 120        |
+| Generator           | -g [power kW] [tank gal]   | -g 50 200        |
+
+### Alternative
+
+| Description | Structure         | Example        |
+| ----------- | ----------------- | -------------- |
+| Site        | -s  [sitename]    | -s mugrid_test |
+| Simulation  | -sim [simulation] | -sim r         |
+
+
+
+### Optional (must come after -s or -sim)
+
+```
+Simulation resilience multiple generators
+                          -sim rmg [gen1 power, gen1 tank, gen1 fuel type, gen2 power, gen2 tank, gen2 fuel type]
+                                                      e.g. -sim rmg 20 100 d 50 200 p
+Run "n" simulations:    -r [n]                      e.g. -r 1           default=2920
+Dispatch vectors ON:    -v                          e.g. -v             default=OFF
+Battery vector ON:      -vb                         e.g. -vb            default=OFF
+Load stats ON:          --loadstats                 e.g. --loadstats    default=OFF
+Skip ahead "h" hours:   -sk [h]                     e.g. -sk 24         default=OFF
+Superloop enable:       -sl                         e.g. -sl            default=OFF
+Enable battery daytime generator charging:
+                        -bdg                        e.g. -bdg           default=OFF
+Gen fuel is propane:    -gfp                        e.g. -gfp           default=OFF
+Days to simulate:       --days [days]               e.g. --days 3       default=365
+Battery depth of dischg:-bd [dod]                   e.g. -bd 0.95       default=1.0
+      -bd must come after -be because it modifies battery energy
+      NB: -bd just changes the battery energy, so soc will still be 0-100%
+Plots ON (option to plot normal or utility first):
+                          --plots [ | u]              e.g. --plots        default=OFF
+Debug (see code):        --debug [ | type]           e.g. --debug res    default=OFF
+
+  
+```
+
