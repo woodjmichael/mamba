@@ -1,12 +1,12 @@
 # Quickstart
 
-mamba.py v6.7 | Michael Wood | 2020.9.10
+mamba.py v7.x | Michael Wood | 2021.5.x
 
 
 
 
 ## Overview
-The 'mamba dispatch' software uses simplified dispatch strategies for very fast simulation of utility connected or islanded microgrids. Peak shaving and arbitrage are the two main strategies. Mamba is written and tested in Python 3.7.
+The 'mamba dispatch' software uses simplified dispatch strategies for very fast simulation of utility connected or islanded microgrids. Peak shaving and arbitrage are the two main strategies. Mamba is written for and tested using Python 3.8.
 
 1. **Single Simulation, or 'run'.**
   - For utility connected simulation we simply calculate the residual load (actual load less PV production) and make a decision to dispatch the battery based on the selected strategy - any available generator is probably not used. This simulation can be anywhere from a few timesteps to a year long.
@@ -20,19 +20,19 @@ The 'mamba dispatch' software uses simplified dispatch strategies for very fast 
 
 ### Installing Python
 
-The internet is not-literally full of great ways to get python 3 on your machine, but if you have any doubt I recommend the ~~PyCharm~~ Atom editor and Anaconda (often just *conda*) library manager. However pip works well too.
+The internet is not-literally full of great ways to get Python 3 on your machine, but Visual Studio Code (editor) and Anaconda/Conda (environment manager, helps install difficult packages) are fantastic.
 
 ### Dependencies
 
-The only non-standard library ('package') should be numpy, which Anaconda can help install. But on a clean Python 3 install the pip could be quicker.
+The only non-standard package should be numpy, which Anaconda can help install. But on a clean Python 3 install pip (or the windows equivalent) could be quicker:
 
 `pip install numpy`
 
-All the commands in this doc are from a normal terminal shell.
+All the commands in this doc are from the normal macOS terminal.
 
 ### Input Data
 
-Input load and solar data should be 15-minute interval, but if that’s not available we can flip a switch. In general site names should match the load and solar datafiles in the I-hope-obvious way.
+Input load and solar data should be a single year of 15-minute interval and in units of kW. Solar can also be in capacity factor (normalized to the physical plant capacity "kWp") if used with the PV scaling factor (see Program Arguments). The site name ("[client]_[building]" identifier) is used by mamba to find the solar and load files. See `Profiles VC` directory for templates.
 
 Mamba creates datetime stamps for output data where the time instant is the **beginning** of the 15-minute interval for which the data is valid.
 
@@ -62,29 +62,25 @@ But for the **input data** it's important to use **consistent** convention data.
 
 Besides input data, the most important considerations are choosing the simulation type and defining the simulation parameters. You could always edit these in the script directly. But giving command line arguments should be faster, clearer, and avoid mistakes.
 
-* Arguments, or 'flags' are explained if you search on “help” in the script or do:
-
-  `python mamba.py --help`
+* Program Arguments are used to tell mamba what to simulate and how, see below for more.
 
 * Basic example argument list. In order: simulation type, site, battery power, battery energy, generator power, generator tank size, generator fuel is propane.
 
-  `python mamba.py -sim r -s fish -bp 30 -be 60 -gp 30 -gt 120 -gfp`
+  `python mamba.py -s badriver_clinic r -b 200 580 -gp 200 400`
 
-* For sites without a generator, ~~set~~ the generator power **is set by default** to 0. For no battery set the battery power to 0.
+* For sites without a generator, the generator power **is set by default** to 0.
 
-* Battery **power** defaults to the same numerical value (different units) as the battery **energy**, which is just to say that we always simulate a '1 h' battery. This can be overridden with the -bp [kW] argument.
+* To run a superloop you can provide the vectors of generator, battery, solar, and load sizes as program arguments. Or you may need to edit the code directly. Search on 'if superloop enabled' and remember to include the superloop flag for a successful execution:
 
-* To run a superloop you will need to edit the code to define the vector of battery sizes and PV scaling factors. Search on 'if superloop enabled' and remember to include the superloop flag for a successful execution:
+  `python mamba.py -s fish r -sl`
 
-  `python mamba.py -sim r -s fish -sl`
+  * When running a superloop, consider first testing your matrix of pv-battery sizes with a single run per Simulated 'Year'. If you messed up, you'll know a lot sooner. Example:
 
-* When running a superloop, consider first testing your matrix of pv-battery sizes with a single run per Simulated 'Year'. If you messed up, you'll know a lot sooner. Example:
-
-  `python mamba.py -sim r -s fish -sl -r 1`
+    `python mamba.py -s fish r -sl -r 1`
 
 ### Errors
 
-You may see an error output about mismatched indices, this is a problem but I don't think it affects the final numbers in a big way. I have it on a to-fix list.
+In general _do_ pay attention to errors output at the end of your simulation. We can mute errors that are repeated and annoying to avoid the Chernobyl problem (habitually ignoring error lights as false positives).
 
 
 
@@ -96,26 +92,19 @@ Harkening back to the three nested loops, we have:
 
 1. **Single Simulation, or 'run.'** The file vectors.csv (off by default) gives you all the dispatch info for a single two-week outage. Warning: only turn this on for a single simulation, or the code will run a lot slower. This is because normally we simulate 2920 (a whole year, in 3 hr increments) at a time, so we throw out the dispatch data for speed. Try:
 
-	`	python mamba.py -s fish -be 60 -r 1 -v`
+	`	python mamba.py -s badriver_clinic r -b 200 580 -r 1 -v`
 
-With the above arguments you'll get only the dispatch starting at 12am Jan. To skip ahead and get any 14-day window of the year do (e.g. 24 hrs):
+With the above arguments you'll get only the 14-day dispatch starting at 12am Jan. To skip ahead 24 hours and get the 3 day dispatch do:
 
-	`	python mamba.py -s fish -be 60 -r 1 -v -sk 24`
-
+	python mamba.py -s badriver_clinic r -b 200 580 -r 1 -sk 24 --days 3
 
 2. **Year of Resilience Simulations (default).** Always produced by default, output.csv contains a year of time to first failure and cumulative operating time data for your chosen pv-battery-generator size. Each row of data is for one Single Outage.
 
 3. **Matrix of Simulated Years, or 'superloop.'** Each superloop.csv row represents a Simulated Year of outages, summarized with confidence and TTFF statistics. Clearly this file is only output with the -sl flag.
 
-### More Analysis
-
-I included an Analysis folder which has some dumb spreadsheets for Apple Numbers, if you don’t have that I can export to excel but it’s a little messy. This was a time-crunch kludge — clearly the code should produce all the plots.
-
 ## Program Arguments   
 Program arguments are best issued in this order, with the values following directly after keys
 `python mamba.py -s mugrid_test r -b 1.5 -be 3 .. (etc)`
-
-
 
 ### Typical
 

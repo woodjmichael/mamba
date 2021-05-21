@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "7.4"
+__version__ = "7.4.1"
 
 #
 # Versions
 #
 
+#   7.4.1 - output csv files now don't have extra lines in windows
 #   7.4 - rmg sim has required program arguments for fuel type (both gens), "--help" moved to Quickstart.md
 #   7.3.1 - version error
 #   7.3 - same hot fix for single gen resilience (don't waste extra gen power)
@@ -973,12 +974,12 @@ def lookup_fuel_curve_coeffs(power, gen_fuel_propane):
             coeffs = [0.0655, 2.05]
             err.gen_fuel_coeffs()
 
-    # propane
+    # liquid propane
     elif gen_fuel_propane:
         if power < 180:
-            coeffs = [0.1441,0.665]
+            coeffs = [0.1441,0.665] # 150 kW
         else:
-            coeffs = [0.1441,0.665]
+            coeffs = [0.1441,0.665] # 150 kW
             err.gen_fuel_coeffs()
     else:
         coeffs = [0.0655, 2.050]
@@ -1962,7 +1963,7 @@ def output_resilience_results(sim):
         filename = output_dir + '/resilience_{}_l{:.2f}_pv{:.2f}_b{:.0f}-{:.1f}h.csv'.format(filename_param,load_scaling_factor, pv_scaling_factor, batt_power, batt_hrs)
     else:
         filename = output_dir + '/resilience_{}.csv'.format(filename_param)
-    with open(filename, 'w') as file:
+    with open(filename, 'w', newline='') as file:
         output = csv.writer(file)
         output.writerow(['# Site:',site])
         output.writerow(['# mamba.py ver:',__version__])
@@ -2010,7 +2011,7 @@ def output_resilience_results(sim):
 #
 def output_dispatch_vectors(sim):
     filename = output_dir + '/vectors_{}.csv'.format(filename_param)
-    with open(filename, 'w') as file:
+    with open(filename, 'w', newline='') as file:
         output = csv.writer(file)
         output.writerow(['# Site:',site])
         output.writerow(['# mamba.py ver:',__version__])
@@ -2082,7 +2083,7 @@ def output_dispatch_vectors(sim):
 #
 def output_superloop_results(sim):
     filename = output_dir + '/resilience_superloop.csv'
-    with open(filename, 'w') as file:
+    with open(filename, 'w', newline='') as file:
         output = csv.writer(file)
         output.writerow(['# Site:',site])
         output.writerow(['# mamba.py ver:',__version__])
