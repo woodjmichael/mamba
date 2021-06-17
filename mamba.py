@@ -12,7 +12,8 @@ __version__ = "7.5"
 # Versions
 #
 
-#   7.5 - unknown fidelity: accept a "Dispatch Schedule" file for demand response, select solar profile file with -pc (pv capacity)
+#   7.6 - add mambavis.py
+#   7.5 - unknown fidelity: accept a Dispatch Schedule file for demand response, select solar profile file with -pc (pv capacity)
 #   7.4.1 - output csv files now don't have extra lines in windows
 #   7.4 - rmg sim has required program arguments for fuel type (both gens), "--help" moved to Quickstart.md
 #   7.3.1 - version error
