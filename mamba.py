@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "7.4.1"
+__version__ = "7.5"
 
 #
 # Versions
 #
 
+#   7.5 - unknown fidelity: accept a "Dispatch Schedule" file for demand response, select solar profile file with -pc (pv capacity)
 #   7.4.1 - output csv files now don't have extra lines in windows
 #   7.4 - rmg sim has required program arguments for fuel type (both gens), "--help" moved to Quickstart.md
 #   7.3.1 - version error
@@ -112,6 +113,8 @@ import datetime as dt
 import time
 from pprint import pprint
 from math import isclose
+from numpy.core.numeric import NaN
+import pandas as pd
 
 
 ################################################################################
@@ -133,6 +136,7 @@ class DataClass:
         me.onlineTime_h_ni = np.zeros((length,),dtype=float)
         me.time_to_grid_import_h_nf = np.zeros((length,), dtype=float) # [h]
         me.soc_nf = np.zeros((length,), dtype=float) # [h]
+        me.data = np.zeros((length,), dtype=int)
         me.code_runtime_s = 0
         me.version = 0
         me.note = ''
@@ -141,6 +145,16 @@ class DataClass:
         me.datetime = []
         me.P_kw_nf.fill(0)
         me.time_to_grid_import_h_nf.fill(0)
+
+    def import_dispatch_schedule(me,site):
+        filename = './Data/Dispatch schedules/' + site + '.csv'            
+        df = pd.read_csv(   filename,
+                            comment='#',
+                            parse_dates=True,
+                            index_col=0,)['2019']
+        me.data = df.values.flatten()
+
+        
 
 #
 # Generator
@@ -567,7 +581,7 @@ class FaultClass:
 # Parse Program Arguments
 #
 def parse_program_arguments():
-    global site, sim, pv_scaling_factor, load_scaling_factor, runs, days, L, skip_ahead, test
+    global site, sim, pv_scaling_factor, load_scaling_factor, pv_capacity, runs, days, L, skip_ahead, test
     global batt_power, batt_energy, calc_energy_from_hrs, batt_hrs, batt_eff, dod, vary_soc0, batt_daytime_gen_chg, batt_grid_charging_period
     global gen_power, gen_tank, gen_fuel_propane, gen_min_on_time, gen_min_off_time
     global gen1_power, gen2_power, gen1_tank, gen2_tank
@@ -597,6 +611,9 @@ def parse_program_arguments():
 
             elif sys.argv[i] == '-p':
                 pv_scaling_factor = float(sys.argv[i+1])
+
+            elif sys.argv[i] == '-pc':
+                pv_capacity = int(sys.argv[i+1])                
 
             elif sys.argv[i] == '-ls':
                 load_scaling_factor = float(sys.argv[i+1])
@@ -784,7 +801,7 @@ def configure_sim(i,sim):
     global output_resilience
     global gen_power, gen_tank, gen_fuel_propane
     global gen1_power, gen1_tank, gen1_fuel_propane, gen2_power, gen2_tank, gen2_fuel_propane
-    global grid_charging, entech, peak_shaving
+    global grid_charging, entech, peak_shaving, scheduled
     global sys
 
 
@@ -823,7 +840,7 @@ def configure_sim(i,sim):
         L = days*24*4                     # length of simulation in timesteps
         output_vectors = 1
 
-    elif sim == 'up':
+    elif sim == 'up':   # utility peak (shaving)
         grid_online = 1
         grid_charging = 1
         gen_power = 0
@@ -834,7 +851,7 @@ def configure_sim(i,sim):
         peak_shaving = 1
         output_vectors = 1
 
-    elif sim == 'ue':
+    elif sim == 'ue':   # utility entech
         grid_online = 1
         grid_charging = 1
         entech = 1
@@ -845,6 +862,17 @@ def configure_sim(i,sim):
         L = days*24*4                     # length of simulation in timesteps
         peak_shaving = 1
         output_vectors = 1
+
+    elif sim == 'ud':   # utility demand (response)
+        grid_online = 1
+        grid_charging = 1
+        gen_power = 0
+        simulation_interval = 8760
+        runs = 1
+        days = 365
+        L = days*24*4                     # length of simulation in timesteps
+        output_vectors = 1
+        scheduled = True
 
     else:
         print('\033[1;31;1m fatality: no simulation type selected')
@@ -860,7 +888,7 @@ def configure_test(test,sim):
     global grid_charging, entech, peak_shaving
     global testing, filename_param, site
     global batt_power, batt_energy
-    global load_scaling_factor, pv_scaling_factor
+    global load_scaling_factor, pv_scaling_factor, pv_capacity
     global plots_on, plot_pv_first, plot_grid_first
     global debug, debug_energy, debug_res
 
@@ -926,7 +954,7 @@ def configure_test(test,sim):
             simulation_interval = 3
             runs = 365*24//simulation_interval   # number of iterations
             days = 14                          # length of grid outage
-            L = days*24*4                     # length of simulation in timesteps  
+            L = days*24*4                     # length of simulation in timesteps        
 
 #
 # create output directory
@@ -1175,6 +1203,9 @@ def import_pv_data(site):
 
 def import_pv_data_vc(site):
 
+    if pv_capacity:
+        site = site + '_' + str(pv_capacity)
+
     if testing:
         filename = './Data/Testing/' + site + '/profile_solar_' + site + '.csv'
     else:
@@ -1210,7 +1241,7 @@ def import_pv_data_vc(site):
 
 def import_soc_vc(site):
 
-    filename = '../../Profiles VC/SOC/profile_soc_' + site + '.csv'
+    filename = '../../Profiles VC/SOC/profile_soc_' + site + '.csv'    
 
     with open(filename,'r') as f:
         datacsv = list(csv.reader(f, delimiter=","))
@@ -1230,7 +1261,12 @@ def import_soc_vc(site):
 
     dispatch_previous.soc_nf = np.concatenate((md,md),axis=0) # wrap around new years
 
-    print ('broken!')
+
+# originally part of import_soc_vc() but that seems like a mistake
+# never called but the code is saved here for future entech-y dispatch stuff 
+def import_demand_targets_entech(site):    
+
+    print('likely broken!')
     quit()
 
     filename = './Data/Demand targets/' + site + '_demand_targets_3.csv'
@@ -1577,10 +1613,19 @@ def simulate_utility_on(t_0,L):
         LSimbalance = load.P_kw_nf[i]      -   pv.P_kw_nf[i_pv]   # load-solar imbalance
 
         # arbitrage
-        if not peak_shaving:
+        if not peak_shaving and not scheduled:
             battpower = bat.power_request(i,LSimbalance)
             LSBimbalance = LSimbalance - battpower
             gpower = grid.power_request(i, LSBimbalance)
+
+        # demand  response
+        elif scheduled:
+            schedpower = dispatch_schedule.data[i] * bat.Pn_kw
+            if schedpower:
+                battpower = bat.power_request(i,schedpower)
+            else:
+                battpower = bat.power_request(i,-bat.Pn_kw)
+            gpower = grid.power_request(i, LSimbalance - battpower)
 
         # peak shaving with charging batt from grid during certain hours
         elif peak_shaving and grid_charging and batt_grid_charging_period:
@@ -2437,9 +2482,12 @@ def notify_script_finished():
     if not grid_online and not plots_on and not debug:
 
         if platform.system() == 'Darwin':   # macos
-            os.system('say "Ding! Resilient fries are done"')
+            #os.system('say "Ding! Resilient fries are done"')
+            sys.stdout.write('\a') # beep            
+            sys.stdout.flush()
         else:
-            sys.stdout.write('\a') # beep
+            sys.stdout.write('\a') # beep            
+            sys.stdout.flush()
 
     return None # so github 'compare' knows the function stops            
 
@@ -2461,6 +2509,7 @@ err =   FaultClass()
 
 # data
 pv_scaling_factor = 1
+pv_capacity = 0
 load_scaling_factor = 1
 filename_param = ''
 old_profile_import = False
@@ -2485,6 +2534,7 @@ L = days*24*4                     # length of simulation in timesteps
 vary_soc0 = False
 weekend_arb_off = 0
 Xh = 168    # option to choose the length of time to calculate confidence interval
+scheduled = False # scheduled dispatch (demand response)
 testing = False
 
 # physical capacities
@@ -2596,6 +2646,11 @@ for load_scaling_factor in load_scale_vector:
                         import_load_data(site, load_stats)
                         import_pv_data(site)
 
+                    if 1:#sim == 'ud':
+                        scheduled=1
+                        dispatch_schedule = DataClass(15.*60., 2*46333)  # timesteps [s], length
+                        dispatch_schedule.import_dispatch_schedule('beartooth_belfry')                        
+
                     elif sim == 'ue':
                         load1_all = DataClass(15.*60., 2*46333)  # timestep[s]
                         load2_all = DataClass(15.*60., 2*46333)  # timestep[s]
@@ -2646,7 +2701,7 @@ for load_scaling_factor in load_scale_vector:
                         pv =    PVClass(  15.*60.,L)                   # timestep[s]
                         gen =   GenClass(   gen_power,gen_fuelA,gen_fuelB,gen_tank,gen_fuel_propane,15.*60.,L)   # kW, fuel A, fuel B, tank[gal], tstep[s]
                         bat =   BattClass(  batt_power,batt_energy,1,batt_eff,15*60.,L)      # kW, kWh, soc0 tstep[s]
-                        grid =  GridClass(  1000.,L)                    # kW
+                        grid =  GridClass(  5000.,L)                    # kW
                         if sim == 'ue':
                             grid1 =  GridClass(1000.,L)                    # kW
                             grid2 =  GridClass(1000.,L)                    # kW
