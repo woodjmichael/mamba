@@ -6,12 +6,13 @@
 __author__ = "Michael Wood"
 __email__ = "michael.wood@mugrid.com"
 __copyright__ = "Copyright 2021, muGrid Analytics"
-__version__ = "7.5"
+__version__ = "7.7"
 
 #
 # Versions
 #
 
+#   7.7 - 
 #   7.6 - add mambavis.py
 #   7.5 - unknown fidelity: accept a Dispatch Schedule file for demand response, select solar profile file with -pc (pv capacity)
 #   7.4.1 - output csv files now don't have extra lines in windows
@@ -2006,7 +2007,8 @@ def simulate_entech(m_0,L):
 #
 def output_resilience_results(sim):
     if superloop_enabled:
-        filename = output_dir + '/resilience_{}_l{:.2f}_pv{:.2f}_b{:.0f}-{:.1f}h.csv'.format(filename_param,load_scaling_factor, pv_scaling_factor, batt_power, batt_hrs)
+        filename = output_dir + '/resilience_{}_l{:.2f}_pv{:.2f}_b{:.0f}-{:.1f}h_g{:.0f}.csv'.format(filename_param,load_scaling_factor, pv_scaling_factor, batt_power, batt_hrs, gen_power)
+        if sim == 'rmg': filename = output_dir + '/resilience_{}_l{:.2f}_pv{:.2f}_b{:.0f}-{:.1f}h_g1{:.0f}_g2{:.0f}.csv'.format(filename_param,load_scaling_factor, pv_scaling_factor, batt_power, batt_hrs, gen1_power, gen2_power)
     else:
         filename = output_dir + '/resilience_{}.csv'.format(filename_param)
     with open(filename, 'w', newline='') as file:
@@ -2022,7 +2024,8 @@ def output_resilience_results(sim):
         output.writerow(['# Simulated outage duration [days]:',days])
         output.writerow(['# Outages simulated:',runs])
         output.writerow(['# Program call and args:',' '.join(sys.argv)])
-        output.writerow(['# PV scaling factor:', pv_scaling_factor])
+        output.writerow(['# PV scaling factor:', pv_scaling_factor])        
+        output.writerow(['# Load scaling factor:',load_scaling_factor])
         output.writerow(['# Battery power [kW]:',batt_power])
         output.writerow(['# Battery energy [kWh]:',batt_energy])
         output.writerow(['# Battery hours [kWh]:',batt_hrs])
@@ -2071,6 +2074,7 @@ def output_dispatch_vectors(sim):
         output.writerow(['# Outages simulated:',runs])
         output.writerow(['# Program call and args:',' '.join(sys.argv)])
         output.writerow(['# PV scaling factor:', pv_scaling_factor])
+        output.writerow(['# Load scaling factor:', load_scaling_factor])
         output.writerow(['# Battery power [kW]:',batt_power])
         output.writerow(['# Battery energy [kWh]:',batt_energy])
         output.writerow(['# Battery hours [kWh]:',batt_hrs])
@@ -2581,7 +2585,7 @@ if superloop_enabled and hard_code_superloop:
     load_scale_vector = [1]
     batt_power_vector = [0.5, 0.75, 1.0]
     batt_hrs_vector = [1]
-    gen_power_vector = [0]
+    gen_power_vector = [5]
 elif superloop_enabled:
     #pv_scale_vector = [pv_scaling_factor]
     #batt_energy_vector = [batt_energy]
@@ -2647,7 +2651,7 @@ for load_scaling_factor in load_scale_vector:
                         import_load_data(site, load_stats)
                         import_pv_data(site)
 
-                    if 1:#sim == 'ud':
+                    if 0:#sim == 'ud':
                         scheduled=1
                         dispatch_schedule = DataClass(15.*60., 2*46333)  # timesteps [s], length
                         dispatch_schedule.import_dispatch_schedule('beartooth_belfry')                        
